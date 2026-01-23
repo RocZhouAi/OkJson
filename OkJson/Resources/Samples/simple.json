@@ -1,0 +1,7 @@
+{
+  "name": "OkJson",
+  "version": "1.0.0",
+  "description": "A native macOS JSON formatter",
+  "features": ["format", "validate", "minify"],
+  "active": true
+}

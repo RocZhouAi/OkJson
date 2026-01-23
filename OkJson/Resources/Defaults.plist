@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>indentation</key>
+    <integer>2</integer>
+    <key>sortKeys</key>
+    <false/>
+    <key>syncScroll</key>
+    <true/>
+    <key>colorScheme</key>
+    <string>default</string>
+    <key>maxDepth</key>
+    <integer>3</integer>
+    <key>lineNumbers</key>
+    <true/>
+</dict>
+</plist>
