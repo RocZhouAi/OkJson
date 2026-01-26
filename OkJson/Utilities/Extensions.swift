@@ -1,11 +1,9 @@
 //  Extensions.swift
 //  OkJson
 //
-//  Foundation and SwiftUI extensions
-//
+//  Foundation extensions
 
 import Foundation
-import SwiftUI
 
 // MARK: - String Extensions
 
@@ -60,19 +58,5 @@ extension Dictionary {
     /// Check if dictionary is empty
     var isNotEmpty: Bool {
         !isEmpty
-    }
-}
-
-// MARK: - View Extensions
-
-extension View {
-    /// Apply conditionally
-    @ViewBuilder
-    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
-        if condition {
-            transform(self)
-        } else {
-            self
-        }
     }
 }

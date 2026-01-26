@@ -1,6 +1,9 @@
 # Swift
 .build/
+build/
 DerivedData/
+*.app/
+Homebrew/
 *.swiftpm/
 Packages/
 Package.resolved

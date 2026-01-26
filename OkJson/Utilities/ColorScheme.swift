@@ -2,38 +2,37 @@
 //  OkJson
 //
 //  Syntax highlighting color definitions and utilities
-//
 
 import Foundation
-import SwiftUI
+import AppKit
 
 /// Syntax highlighting color definitions
 enum SyntaxColor {
     // MARK: - Default Scheme Colors
 
-    static let defaultKey = Color(red: 0.2, green: 0.5, blue: 1.0) // Bright blue
-    static let defaultString = Color(red: 0.42, green: 0.53, blue: 0.35) // #6A8759
-    static let defaultNumber = Color(red: 0.41, green: 0.59, blue: 0.73) // #6897BB
-    static let defaultBoolean = Color(red: 0.8, green: 0.47, blue: 0.2) // #CC7832
-    static let defaultNull = Color(red: 0.8, green: 0.47, blue: 0.2) // #CC7832
+    static let defaultKey = NSColor(red: 0.2, green: 0.5, blue: 1.0, alpha: 1.0) // Bright blue
+    static let defaultString = NSColor(red: 0.42, green: 0.53, blue: 0.35, alpha: 1.0) // #6A8759
+    static let defaultNumber = NSColor(red: 0.41, green: 0.59, blue: 0.73, alpha: 1.0) // #6897BB
+    static let defaultBoolean = NSColor(red: 0.8, green: 0.47, blue: 0.2, alpha: 1.0) // #CC7832
+    static let defaultNull = NSColor(red: 0.8, green: 0.47, blue: 0.2, alpha: 1.0) // #CC7832
 
     // MARK: - Dark Scheme Colors
 
-    static let darkKey = Color(red: 0.4, green: 0.6, blue: 0.8)
-    static let darkString = Color(red: 0.5, green: 0.8, blue: 0.5)
-    static let darkNumber = Color(red: 0.5, green: 0.7, blue: 0.9)
-    static let darkBoolean = Color(red: 0.9, green: 0.6, blue: 0.3)
-    static let darkNull = Color(red: 0.9, green: 0.6, blue: 0.3)
+    static let darkKey = NSColor(red: 0.4, green: 0.6, blue: 0.8, alpha: 1.0)
+    static let darkString = NSColor(red: 0.5, green: 0.8, blue: 0.5, alpha: 1.0)
+    static let darkNumber = NSColor(red: 0.5, green: 0.7, blue: 0.9, alpha: 1.0)
+    static let darkBoolean = NSColor(red: 0.9, green: 0.6, blue: 0.3, alpha: 1.0)
+    static let darkNull = NSColor(red: 0.9, green: 0.6, blue: 0.3, alpha: 1.0)
 
     // MARK: - Diff Colors
 
-    static let additionBackground = Color.green.opacity(0.2)
-    static let deletionBackground = Color.red.opacity(0.2)
-    static let modificationBackground = Color.yellow.opacity(0.2)
+    static let additionBackground = NSColor.green.withAlphaComponent(0.2)
+    static let deletionBackground = NSColor.red.withAlphaComponent(0.2)
+    static let modificationBackground = NSColor.yellow.withAlphaComponent(0.2)
 
     // MARK: - Error Colors
 
-    static let errorBackground = Color(red: 1, green: 0.8, blue: 0.8)
+    static let errorBackground = NSColor(red: 1, green: 0.8, blue: 0.8, alpha: 1.0)
 }
 
 /// Token type for syntax highlighting
@@ -49,7 +48,7 @@ enum TokenType {
 }
 
 /// Get color for token type based on scheme
-func colorFor(token: TokenType, scheme: ColorSchemeEnum) -> Color {
+func colorFor(token: TokenType, scheme: ColorSchemeEnum) -> NSColor {
     switch scheme {
     case .default:
         switch token {
@@ -57,7 +56,7 @@ func colorFor(token: TokenType, scheme: ColorSchemeEnum) -> Color {
         case .string: return SyntaxColor.defaultString
         case .number: return SyntaxColor.defaultNumber
         case .boolean, .null: return SyntaxColor.defaultBoolean
-        default: return Color.primary
+        default: return NSColor.labelColor
         }
     case .dark:
         switch token {
@@ -65,9 +64,9 @@ func colorFor(token: TokenType, scheme: ColorSchemeEnum) -> Color {
         case .string: return SyntaxColor.darkString
         case .number: return SyntaxColor.darkNumber
         case .boolean, .null: return SyntaxColor.darkBoolean
-        default: return Color.primary
+        default: return NSColor.labelColor
         }
     case .highContrast:
-        return Color.primary
+        return NSColor.labelColor
     }
 }

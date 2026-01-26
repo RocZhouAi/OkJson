@@ -1,137 +1,106 @@
 //  JSONFormatter.swift
 //  OkJson
 //
-//  JSON formatting service
+//  Service for syntax highlighting JSON text
+//  (Previously known as SyntaxHighlightService, moved here to fix Xcode project reference issues)
 //
 
-import Foundation
+import AppKit
 
-/// JSON formatting service
-final class JSONFormatter {
-    // MARK: - Singleton
-
-    static let shared = JSONFormatter()
-
+class SyntaxHighlightService {
+    
+    static let shared = SyntaxHighlightService()
+    
     private init() {}
-
-    // MARK: - Format Method
-
-    /// Format JSONNode to string with options
-    func format(_ node: JSONNode, options: FormatOptions = FormatOptions()) -> String {
-        var output = ""
-        formatNode(node, indent: 0, options: options, output: &output)
-        return output
-    }
-
-    // MARK: - Minify Method
-
-    /// Compress JSON by removing whitespace
-    func minify(_ node: JSONNode) -> String {
-        var output = ""
-        formatNode(node, indent: 0, options: FormatOptions(indentation: 0), output: &output)
-        return output.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: " ", with: "")
-    }
-
-    // MARK: - Private Helpers
-
-    private func formatNode(
-        _ node: JSONNode,
-        indent: Int,
-        options: FormatOptions,
-        output: inout String
-    ) {
-        let indentString = String(repeating: " ", count: indent)
-
-        switch node.type {
-        case .object:
-            if node.children.isEmpty {
-                output += "{}"
-            } else {
-                output += "{\n"
-
-                var sortedChildren = node.children
-                if options.sortKeys {
-                    sortedChildren = node.children.sorted {
-                        guard let key1 = $0.key, let key2 = $1.key else {
-                            return $0.key ?? "" < $1.key ?? ""
-                        }
-                        return key1 < key2
-                    }
-                }
-
-                for (index, child) in sortedChildren.enumerated() {
-                    output += indentString + String(repeating: " ", count: options.indentation)
-
-                    if let key = child.key {
-                        output += "\"\(key)\": "
-                    }
-
-                    formatNode(child, indent: indent + options.indentation, options: options, output: &output)
-
-                    if index < sortedChildren.count - 1 {
-                        output += ","
-                    }
-                    output += "\n"
-                }
-
-                output += indentString + "}"
-            }
-
-        case .array:
-            if node.children.isEmpty {
-                output += "[]"
-            } else {
-                output += "[\n"
-
-                for (index, child) in node.children.enumerated() {
-                    output += indentString + String(repeating: " ", count: options.indentation)
-                    formatNode(child, indent: indent + options.indentation, options: options, output: &output)
-
-                    if index < node.children.count - 1 {
-                        output += ","
-                    }
-                    output += "\n"
-                }
-
-                output += indentString + "]"
-            }
-
-        case .string:
-            if let value = node.value as? String {
-                output += "\"\(escapeString(value))\""
-            } else {
-                output += "\"\""
-            }
-
-        case .number:
-            output += node.displayValue
-
-        case .boolean:
-            output += node.displayValue
-
-        case .null:
-            output += node.displayValue
+    
+    // Regex pattern to identifying JSON tokens
+    // Group 1: String (Quoted)
+    // Group 2: Key delimiter (colon) - if present with Group 1, it's a key
+    // Group 3: Number
+    // Group 4: Boolean or Null
+    private let jsonPattern = "(\"(?:[^\"\\\\]|\\\\.)*\")\\s*(:)?|(-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)|(true|false|null)"
+    
+    private lazy var regex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: jsonPattern, options: [])
+    }()
+    
+    /// Synchronously highlight text storage (Main Thread Only)
+    func highlight(_ textStorage: NSTextStorage) {
+        let string = textStorage.string
+        // 1. Reset base attributes first
+        let fullRange = NSRange(location: 0, length: string.utf16.count)
+        textStorage.removeAttribute(.foregroundColor, range: fullRange)
+        textStorage.addAttribute(.foregroundColor, value: NSColor.textColor, range: fullRange)
+        
+        // 2. Calculate highlights
+        let highlights = calculateHighlights(for: string)
+        
+        // 3. Apply highlights
+        textStorage.beginEditing()
+        for (range, color) in highlights {
+            textStorage.addAttribute(.foregroundColor, value: color, range: range)
         }
+        textStorage.endEditing()
     }
-
-    private func escapeString(_ string: String) -> String {
-        string
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
+    
+    /// Calculate highlights for a given string (Thread Safe)
+    /// - Parameters:
+    ///   - string: The JSON string to highlight
+    ///   - isDark: Optional explicit theme preference. If nil, tries to detect from Main Thread or defaults to false.
+    func calculateHighlights(for string: String, isDark: Bool? = nil) -> [(NSRange, NSColor)] {
+        guard let regex = regex else { return [] }
+        
+        let range = NSRange(location: 0, length: string.utf16.count)
+        var highlights: [(NSRange, NSColor)] = []
+        
+        let safeIsDark: Bool
+        if let isDark = isDark {
+            safeIsDark = isDark
+        } else {
+            // If on main thread, we can check. If on bg, default to false.
+            if Thread.isMainThread {
+                 safeIsDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            } else {
+                 safeIsDark = false
+            }
+        }
+        
+        let scheme: ColorSchemeEnum = safeIsDark ? .dark : .default
+        
+        regex.enumerateMatches(in: string, options: [], range: range) { match, flags, stop in
+            guard let match = match else { return }
+            
+            // Group 1: String
+            if let stringRange = Range(match.range(at: 1), in: string) {
+                let nsRange = NSRange(stringRange, in: string)
+                let isKey = match.range(at: 2).location != NSNotFound
+                
+                if isKey {
+                    highlights.append((nsRange, colorFor(token: .key, scheme: scheme)))
+                } else {
+                     highlights.append((nsRange, colorFor(token: .string, scheme: scheme)))
+                }
+            }
+            // Group 3: Number
+            else if let numberRange = Range(match.range(at: 3), in: string) {
+                 let nsRange = NSRange(numberRange, in: string)
+                 highlights.append((nsRange, colorFor(token: .number, scheme: scheme)))
+            }
+            // Group 4: Boolean/Null
+            else if let specialRange = Range(match.range(at: 4), in: string) {
+                 let nsRange = NSRange(specialRange, in: string)
+                 highlights.append((nsRange, colorFor(token: .boolean, scheme: scheme)))
+            }
+        }
+        
+        return highlights
     }
 }
 
-// MARK: - FormatOptions
+// MARK: - Legacy Compatibility
 
-struct FormatOptions {
-    var indentation: Int
-    var sortKeys: Bool
-
-    init(indentation: Int = 2, sortKeys: Bool = false) {
-        self.indentation = indentation
-        self.sortKeys = sortKeys
-    }
+/// JSON formatter service (Legacy stub)
+final class JSONFormatter {
+    static let shared = JSONFormatter()
+    private init() {}
 }

@@ -31,60 +31,8 @@ enum Constants {
 
     // MARK: - Default Content
 
-    /// Default JSON for testing/demo
-    static let defaultJSON = """
-    {
-        "data": [
-            {
-                "ID": 10,
-                "CreatedAt": "2026-01-15T06:15:43.390143Z",
-                "UpdatedAt": "2026-01-15T06:15:43.390143Z",
-                "DeletedAt": null,
-                "name": "炉下水库",
-                "location": "广东省惠州市惠东县多祝镇炉下",
-                "description": "惠州炉下位于惠州市惠东县，拥有开阔草原、清澈溪流和美丽山景，全免费。",
-                "images": [
-                    "https://example.com/image1.png",
-                    "https://example.com/image2.png"
-                ],
-                "created_by": "zhoujunpeng1992",
-                "latitude": 22.98616972907305,
-                "longitude": 115.02456390068534,
-                "has_water": true,
-                "has_electricity": false,
-                "has_toilet": false,
-                "has_campfire": true,
-                "has_wifi": false,
-                "allows_pets": false,
-                "has_parking": true,
-                "has_rv": false,
-                "has_tent": false,
-                "rating": 0,
-                "is_favorite": false,
-                "rating_distribution": {
-                    "1": 0,
-                    "2": 0,
-                    "3": 0,
-                    "4": 0,
-                    "5": 0
-                },
-                "review_count": 0,
-                "creator": null
-            },
-            {
-                "ID": 11,
-                "name": "耀潭村",
-                "location": "广东省惠州市博罗县杨村镇耀潭村",
-                "description": "基础概况：位置位于惠州博罗县耀潭村，费用全程免费，拥有超大平坦草坪、江景日落。",
-                "has_water": true,
-                "has_electricity": false,
-                "has_toilet": true,
-                "has_campfire": true,
-                "rating": 0
-            }
-        ]
-    }
-    """
+    /// Default JSON for testing/demo (empty for production)
+    static let defaultJSON = ""
 
     // MARK: - UserDefaults Keys
 
@@ -107,5 +55,14 @@ enum Constants {
         static let encodingError = "Unable to read file as UTF-8"
         static let permissionDenied = "Permission denied"
         static let fileNotFound = "File not found"
+    }
+    
+    // MARK: - Notifications
+    
+    enum Notifications {
+        /// 格式化设置变化通知（缩进、排序等）
+        static let formatSettingsChanged = Notification.Name("OkJson.formatSettingsChanged")
+        /// 显示设置变化通知（行号等）
+        static let displaySettingsChanged = Notification.Name("OkJson.displaySettingsChanged")
     }
 }

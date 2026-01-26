@@ -2,20 +2,14 @@
 //  OkJson
 //
 //  Syntax highlighting color scheme enum for UI selection
-//
 
 import Foundation
-import SwiftUI
 
 /// Syntax highlighting theme selector for UI
-enum ColorSchemeEnum: String, CaseIterable, Identifiable {
+enum ColorSchemeEnum: String, CaseIterable {
     case `default`
     case dark
     case highContrast
-
-    // MARK: - Identifiable
-
-    var id: String { rawValue }
 
     // MARK: - Display Properties
 
