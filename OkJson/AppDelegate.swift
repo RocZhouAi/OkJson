@@ -82,6 +82,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         copyResultItem.keyEquivalentModifierMask = [.command, .shift]
         jsonMenu.addItem(copyResultItem)
         
+        jsonMenu.addItem(NSMenuItem.separator())
+        
+        let sortKeysItem = NSMenuItem(title: "Sort Keys", action: #selector(sortKeys), keyEquivalent: "s")
+        sortKeysItem.keyEquivalentModifierMask = [.command, .shift]
+        jsonMenu.addItem(sortKeysItem)
+        
         // Window 菜单
         let windowMenuItem = NSMenuItem()
         mainMenu.addItem(windowMenuItem)
@@ -115,6 +121,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func copyFormattedResult() {
         NotificationCenter.default.post(name: .copyFormattedResult, object: nil)
     }
+    
+    @objc func sortKeys() {
+        NotificationCenter.default.post(name: .sortKeys, object: nil)
+    }
 }
 
 // MARK: - Notification Names
@@ -125,4 +135,5 @@ extension Notification.Name {
     static let minifyJSON = Notification.Name("minifyJSON")
     static let pasteJSON = Notification.Name("pasteJSON")
     static let copyFormattedResult = Notification.Name("copyFormattedResult")
+    static let sortKeys = Notification.Name("sortKeys")
 }

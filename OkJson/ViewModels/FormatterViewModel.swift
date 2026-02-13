@@ -37,6 +37,9 @@ class FormatterViewModel {
     
     /// Whether processing is in progress
     var isProcessing: Bool = false
+
+    /// Generation counter for task cancellation
+    private var formatGeneration: Int = 0
     
     /// Whether to sort keys alphabetically
     var sortKeys: Bool = false {
@@ -118,14 +121,17 @@ class FormatterViewModel {
         }
     }
     
-    // MARK: - Format Method
-    
     /// Format the input JSON
-    /// - Parameter forceGenerateString: Ensure string is generated even for large files
-    func formatJSON(forceGenerateString: Bool = false) {
+    /// - Parameters:
+    ///   - forceGenerateString: Ensure string is generated even for large files
+    ///   - sortKeysOverride: Optional override for sortKeys (used for manual sorting)
+    ///   - completion: Optional callback invoked on main thread after formatting completes
+    func formatJSON(forceGenerateString: Bool = false, sortKeysOverride: Bool? = nil, completion: (() -> Void)? = nil) {
+        // 确定是否排序：优先使用 override，否则使用当前设置
+        let shouldSort = sortKeysOverride ?? sortKeys
         // Capture input to avoid threading issues
         let input = inputText
-        
+
         guard !input.isEmpty else {
             self.parseError = ParseError(
                 message: Constants.ErrorMessages.emptyInput,
@@ -135,24 +141,29 @@ class FormatterViewModel {
             )
             self.formattedText = ""
             self.parsedTree = nil
+            completion?()
             return
         }
-        
+
         isProcessing = true
-        defer { isProcessing = false }
-        
+
+        // Increment generation to cancel stale tasks
+        formatGeneration += 1
+        let currentGeneration = formatGeneration
+
         // Capture settings to avoid threading issues
         let currentIndentation = indentation
-        
+
         // Asynchronous processing to prevent UI freezing on large files
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            
+
             // 1. Trim on background thread (heavy for huge strings)
             let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-            
+
             if trimmed.isEmpty {
                  DispatchQueue.main.async {
+                     guard currentGeneration == self.formatGeneration else { return }
                      self.parseError = ParseError(
                          message: Constants.ErrorMessages.emptyInput,
                          line: 1,
@@ -161,32 +172,36 @@ class FormatterViewModel {
                      )
                      self.formattedText = ""
                      self.parsedTree = nil
+                     self.isProcessing = false
+                     completion?()
                  }
                  return
             }
-            
-            // Large file threshold (1MB)
-            let isLargeFile = trimmed.count > 1_000_000
+
+            // 极致优化：Tree View 模式不需要 prettyJSONString
+            // 将阈值降低到 100KB，减少不必要的字符串生成
+            let isLargeFile = trimmed.count > 100_000
             let shouldGenerateString = forceGenerateString || !isLargeFile
-            
+
             // 使用基于索引的按需解析
-            if let indexedNode = IndexedJSONNode.fromJSONString(trimmed, shouldSortKeys: self.sortKeys) {
-                
+            if let indexedNode = IndexedJSONNode.fromJSONString(trimmed, shouldSortKeys: shouldSort) {
+
                 var formatted = ""
                 if shouldGenerateString {
                     formatted = indexedNode.prettyJSONString(indentation: currentIndentation)
                 }
-                
+
                 DispatchQueue.main.async {
+                    guard currentGeneration == self.formatGeneration else { return }
                     self.formattedText = formatted
                     self.parsedTree = indexedNode
                     self.parseError = nil
-                    
-                    // If we skipped generation, we might want to notify UI or just leave it empty
-                    // The UI should handle empty formattedText if parsedTree is present (as "Large File Mode")
+                    self.isProcessing = false
+                    completion?()
                 }
             } else {
                 DispatchQueue.main.async {
+                    guard currentGeneration == self.formatGeneration else { return }
                     self.parseError = ParseError(
                         message: Constants.ErrorMessages.invalidJSON,
                         line: 1,
@@ -195,6 +210,8 @@ class FormatterViewModel {
                     )
                     self.formattedText = ""
                     self.parsedTree = nil
+                    self.isProcessing = false
+                    completion?()
                 }
             }
         }
@@ -247,35 +264,42 @@ class FormatterViewModel {
         self.parseError = nil
     }
     
-    /// 简单的 JSON 压缩
+    /// 简单的 JSON 压缩 (字节缓冲区版本)
     private func minifyJSONString(_ json: String) -> String {
-        var result = ""
+        let utf8 = Array(json.utf8)
+        let len = utf8.count
+        var buffer = [UInt8]()
+        buffer.reserveCapacity(len)
         var inString = false
-        
-        for char in json {
+        var isEscaped = false
+        var i = 0
+
+        while i < len {
+            let byte = utf8[i]
             if inString {
-                result.append(char)
-                if char == "\\" {
-                    continue
-                }
-                if char == "\"" {
+                buffer.append(byte)
+                if isEscaped {
+                    isEscaped = false
+                } else if byte == 92 { // backslash
+                    isEscaped = true
+                } else if byte == 34 { // quote
                     inString = false
                 }
-                continue
+            } else {
+                switch byte {
+                case 34: // "
+                    inString = true
+                    buffer.append(byte)
+                case 32, 10, 13, 9: // space, \n, \r, \t
+                    break // skip whitespace
+                default:
+                    buffer.append(byte)
+                }
             }
-            
-            switch char {
-            case "\"":
-                inString = true
-                result.append(char)
-            case " ", "\n", "\r", "\t":
-                break // 跳过空白
-            default:
-                result.append(char)
-            }
+            i += 1
         }
-        
-        return result
+
+        return String(decoding: buffer, as: UTF8.self)
     }
     
     // MARK: - Clipboard
@@ -319,9 +343,7 @@ class FormatterViewModel {
         
         // 没有有效内容，尝试先格式化再复制
         if !inputText.isEmpty {
-            formatJSON(forceGenerateString: true)
-            // 格式化是异步的，需要在完成后复制
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            formatJSON(forceGenerateString: true) { [weak self] in
                 guard let self = self, !self.formattedText.isEmpty else { return }
                 let pasteboard = NSPasteboard.general
                 pasteboard.clearContents()

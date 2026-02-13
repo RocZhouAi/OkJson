@@ -70,7 +70,9 @@ class AppContainerViewController: NSViewController {
     private let tips = [
         "⌘V 粘贴 JSON",
         "⌘F 格式化",
-        "⌘⇧C 复制结果"
+        "⌘⇧C 复制结果",
+        "⌘S 排序 Key",
+        "⌘⇧F 复制格式化"
     ]
     private var currentTipIndex = 0
     private var tipsTimer: Timer?

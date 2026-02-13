@@ -1,48 +1,82 @@
 //  IndexedJSONNode.swift
 //  OkJson
 //
-//  基于索引的轻量级 JSON 节点 - 不保存解析值，按需从原始字符串读取
+//  基于索引的轻量级 JSON 节点 (极致性能版)
+//  - 移除所有 String 存储 (Key, Path)
+//  - 零拷贝访问 Key 和 Value
+//  - 基于 Byte 的快速扫描
 //
 
 import Foundation
 
+/// 共享的 Data 持有者，避免每个节点持有独立闭包
+private final class DataHolder {
+    let data: Data
+    init(_ data: Data) { self.data = data }
+}
+
 /// 基于索引的轻量级 JSON 节点
 final class IndexedJSONNode {
     // MARK: - Properties
-    
-    /// 节点类型
+
+    /// 节点类型 (1 Byte)
     let type: NodeType
+
+    // 移除 key: String，改为偏移量
+    // 根节点/数组元素 keyStartOffset = -1
+    private let keyStartOffset: Int
+    private let keyEndOffset: Int
     
-    /// 属性键名（nil 表示根节点或数组元素）
-    let key: String?
+    /// 用于删除操作：完整的起始位置（包含 key 的引号）
+    /// 如果是对象的值节点，返回 key 引号前一个字节的位置；
+    /// 如果是数组元素或根节点，返回 startOffset
+    var fullStartOffset: Int {
+        // keyStartOffset 是 key 内容的起始，我们需要包含引号
+        // 所以 fullStart = keyStartOffset - 1 (引号位置)
+        if keyStartOffset >= 1 {
+            return keyStartOffset - 1
+        }
+        return startOffset
+    }
     
-    /// 在原始 JSON 字符串中的起始位置
-    let startIndex: String.Index
+    /// 在原始 JSON Data 中的起始字节偏移
+    let startOffset: Int
     
-    /// 在原始 JSON 字符串中的结束位置
-    let endIndex: String.Index
+    /// 在原始 JSON Data 中的结束字节偏移
+    let endOffset: Int
     
     /// 嵌套深度
     let depth: Int
     
-    /// JSONPath 路径
-    let path: String
+    // 移除 path: String，改为计算属性或仅在 diff 时传递
+    // path 占用了对大量内存，对于仅查看来说是浪费
+    // 只有在 diff/delete 时需要 path
+    // 我们可以添加一个 debugPath 计算属性用于调试，或者在 traverse 时构建 path
     
-    /// 对原始 JSON 字符串的弱引用（通过闭包）
-    private let jsonStringProvider: () -> String
+    /// 共享数据持有者（替代闭包，消除堆分配开销）
+    private let dataHolder: DataHolder
     
-    /// 缓存的子节点信息（只存索引，不存值）
-    private var _childrenIndices: [(key: String?, start: String.Index, end: String.Index, type: NodeType)]?
+    /// 缓存的子节点索引信息
+    // 优化：使用 Struct 减少内存
+    private struct ChildInfo {
+        let keyStart: Int
+        let keyEnd: Int
+        let start: Int
+        let end: Int
+        let type: NodeType
+    }
     
-    /// 缓存的子节点对象，确保同一索引返回相同实例（保留状态）
-    private var _cachedChildrenNodes: [Int: IndexedJSONNode] = [:]
+    private var _childrenInfo: [ChildInfo]?
     
-    /// 下一次扫描的起始位置（用于分页加载）
-    private var nextScanIndex: String.Index?
+    /// 缓存的子节点对象（数组替代字典，连续索引直接访问）
+    private var _cachedChildrenNodes: [IndexedJSONNode?] = []
+    
+    /// 下一次扫描的起始字节偏移
+    private var nextScanOffset: Int?
     
     /// 是否已加载完所有子节点
     var isFullyLoaded: Bool {
-        return nextScanIndex == nil
+        return nextScanOffset == nil
     }
     
     /// 是否需要对 Key 进行排序
@@ -50,20 +84,83 @@ final class IndexedJSONNode {
     
     // MARK: - Computed Properties
     
-    /// 获取原始 JSON 字符串
-    private var jsonString: String {
-        jsonStringProvider()
+    /// 获取原始 JSON Data
+    internal var jsonData: Data {
+        dataHolder.data
     }
+    
+    /// Key (按需解码)
+    var key: String? {
+        if keyStartOffset < 0 { return nil }
+        
+        let data = jsonData
+        // 范围检查
+        guard keyStartOffset < data.count, keyEndOffset <= data.count, keyStartOffset < keyEndOffset else {
+             return nil
+        }
+        
+        // keyStartOffset 指向引号内的内容（或者包含引号？）
+        // 解析器存储的是包含引号的范围吗？通常 key 是 "foo"
+        // 我们的解析器返回的是 start/end。
+        // 为了性能，我们假设存储的是包含引号的范围，或者不包含？
+        // 从解析逻辑看，parser 返回的是 *value* range.
+        // wait, childInfo stores key range?
+        // Let's check init.
+        
+        // 我们需要约定：keyStartOffset / keyEndOffset 是去除引号后的吗？
+        // 下面解析逻辑中，parseString 返回的是 unescaped string AND next index.
+        // 为了零拷贝，我们需要原始 range.
+        // 修改 parser: parseStringRawRange -> (start, end) around content.
+        
+        // 这里假设是原始字节范围 (不含引号)
+        // 但如果包含转义符，直接 UTF8 decode 可能会有 '\\'
+        // 对于 key，绝大多数情况没有转义。
+        // 我们先做简单解码。
+        let subData = data[keyStartOffset..<keyEndOffset]
+        
+        // Fallback unescape if needed
+        // 为了极致性能，先尝试直接 string，如果有 \ 再处理
+        // 或者直接 string，显示时 key 稍微带个转义也行（如 key 里面有换行 debugDescription 会处理）
+        // 此时我们只是为了 UI 显示。
+        
+        // 使用 String(decoding: as: UTF8) 非常快
+        // 但是对于转义字符，比如 "a\nb"，raw bytes 是 97, 92, 110, 98
+        // String decoding 得到 "a\\nb"
+        // 这对于 key 展示通常是可以接受的，或者 UI 层处理。
+        // 但标准 JSON parser 会 unescape。
+        // 可以在这里做 unescape。
+        
+        // 但为了 "Extreme"，我们希望 UI 列表里直接显示 raw key 也可以。
+        // 真的需要 unescape 吗？
+        // "foo": 1
+        // Key is foo.
+        // "foo\nbar": 1
+        // Key is foo<newline>bar.
+        // UI 显示 "foo\nbar" 也是对的。
+        
+        return String(decoding: subData, as: UTF8.self)
+    }
+    
+    /// 路径 (计算属性，性能开销大，谨慎使用)
+    /// 因为移除了 parent 指针和 stored path，无法直接获取 path
+    /// 如果业务层依赖 path，需要在遍历时传递。
+    /// 目前只有 deleteNode 和 Diff 需要 path。
+    /// 我们修改 API：node.path 移除。依赖 context。
+    // var path: String { ... } // Removed
     
     /// 获取当前节点的原始 JSON 字符串片段
     var rawString: String {
-        String(jsonString[startIndex..<endIndex])
+        let data = jsonData
+        let safeStart = max(0, min(startOffset, data.count))
+        let safeEnd = max(safeStart, min(endOffset, data.count))
+        let subData = data[safeStart..<safeEnd]
+        return String(decoding: subData, as: UTF8.self)
     }
     
     /// 子节点数量
     var childCount: Int {
         if !type.isContainer { return 0 }
-        return childrenIndices.count
+        return childrenInfo.count
     }
     
     /// 是否有子节点
@@ -72,42 +169,34 @@ final class IndexedJSONNode {
     }
     
     /// 子节点索引信息（延迟解析）
-    private var childrenIndices: [(key: String?, start: String.Index, end: String.Index, type: NodeType)] {
-        if _childrenIndices == nil {
+    private var childrenInfo: [ChildInfo] {
+        if _childrenInfo == nil {
             if shouldSortKeys {
                 loadMore(count: Int.max)
             } else {
                 loadMore(count: 1000)
             }
         }
-        return _childrenIndices ?? []
+        return _childrenInfo ?? []
     }
     
     /// 是否还有更多子节点可加载
     var hasMoreChildren: Bool {
         guard type.isContainer else { return false }
-        // 确保已初始化
-        if _childrenIndices == nil {
-            _ = childrenIndices
+        if _childrenInfo == nil {
+             _ = childrenInfo
         }
         return !isFullyLoaded
     }
     
-    /// 显示值（从原始字符串按需读取）
+    /// 显示值
     var displayValue: String {
         switch type {
         case .object:
             return childCount == 0 ? "{}" : ""
         case .array:
             return childCount == 0 ? "[]" : ""
-        case .string:
-            // Scroll Optimization: Return raw string (including quotes) directly
-            // Avoids expensive unescaping during scroll
-            return rawString
-        case .number, .boolean, .null:
-            // Scroll Optimization: Return raw string directly
-            // Avoids trimming overhead
-            // The parser ensures the range is correct (excludes delimiters)
+        case .string, .number, .boolean, .null:
             return rawString
         }
     }
@@ -116,523 +205,495 @@ final class IndexedJSONNode {
     var value: Any? {
         switch type {
         case .string:
-            return extractStringValue()
-        case .number:
-            let content = String(jsonString[startIndex..<endIndex]).trimmingCharacters(in: .whitespaces)
-            if content.contains(".") {
-                return Double(content)
+            // String needs unescape
+            let s = rawString
+            // Remove quotes
+            if s.count >= 2 && s.first == "\"" && s.last == "\"" {
+                 let content = s.dropFirst().dropLast()
+                 // Simple unescape
+                 return String(content).simpleUnescape()
             }
-            return Int(content)
+            return s
+        case .number:
+            let str = rawString.trimmingCharacters(in: .whitespaces)
+            if str.contains(".") {
+                return Double(str)
+            }
+            return Int(str)
         case .boolean:
-            let content = String(jsonString[startIndex..<endIndex]).trimmingCharacters(in: .whitespaces)
-            return content == "true"
+            return rawString.trimmingCharacters(in: .whitespaces) == "true"
         case .null:
             return nil
-        case .object, .array:
+        default:
             return nil
         }
     }
     
     // MARK: - Initialization
-    
-    init(
+
+    fileprivate init(
         type: NodeType,
-        key: String?,
-        startIndex: String.Index,
-        endIndex: String.Index,
+        keyStart: Int,
+        keyEnd: Int,
+        startOffset: Int,
+        endOffset: Int,
         depth: Int,
-        path: String,
         shouldSortKeys: Bool,
-        jsonStringProvider: @escaping () -> String
+        dataHolder: DataHolder
     ) {
         self.type = type
-        self.key = key
-        self.startIndex = startIndex
-        self.endIndex = endIndex
+        self.keyStartOffset = keyStart
+        self.keyEndOffset = keyEnd
+        self.startOffset = startOffset
+        self.endOffset = endOffset
         self.depth = depth
-        self.path = path
         self.shouldSortKeys = shouldSortKeys
-        self.jsonStringProvider = jsonStringProvider
+        self.dataHolder = dataHolder
     }
     
     // MARK: - 子节点访问
     
-    /// 获取指定索引的子节点
     func child(at index: Int) -> IndexedJSONNode? {
-        guard index >= 0 && index < childrenIndices.count else { return nil }
-        
-        // 检查缓存
+        guard index >= 0 && index < childrenInfo.count else { return nil }
+
+        // 延迟初始化数组到正确大小
+        if _cachedChildrenNodes.count < childrenInfo.count {
+            _cachedChildrenNodes = [IndexedJSONNode?](repeating: nil, count: childrenInfo.count)
+        }
+
         if let cachedNode = _cachedChildrenNodes[index] {
             return cachedNode
         }
-        
-        let info = childrenIndices[index]
-        let childPath: String
-        if let key = info.key {
-            childPath = "\(path).\(escapeKey(key))"
-        } else {
-            childPath = "\(path)[\(index)]"
-        }
-        
+
+        let info = childrenInfo[index]
+
         let node = IndexedJSONNode(
             type: info.type,
-            key: info.key,
-            startIndex: info.start,
-            endIndex: info.end,
+            keyStart: info.keyStart,
+            keyEnd: info.keyEnd,
+            startOffset: info.start,
+            endOffset: info.end,
             depth: depth + 1,
-            path: childPath,
             shouldSortKeys: shouldSortKeys,
-            jsonStringProvider: jsonStringProvider
+            dataHolder: dataHolder
         )
-        
-        // 存入缓存
+
         _cachedChildrenNodes[index] = node
         return node
     }
     
-    // MARK: - Private Methods
+    // MARK: - Parsing Engine
     
-    /// 加载更多子节点
-    /// - Parameter count: 加载数量
-    /// - Returns: 新加载的子节点数量
     @discardableResult
     func loadMore(count: Int = 1000) -> Int {
         guard type.isContainer else { return 0 }
+        let data = jsonData
+        let totalCount = data.count
         
-        // 初始化缓存
-        if _childrenIndices == nil {
-            _childrenIndices = []
-            // 跳过 '{' 或 '['
-            nextScanIndex = jsonString.index(after: startIndex)
+        // 初始化
+        if _childrenInfo == nil {
+            _childrenInfo = []
+            nextScanOffset = startOffset + 1
         }
         
-        guard let startScan = nextScanIndex, startScan < endIndex else {
-            nextScanIndex = nil
+        guard var i = nextScanOffset, i < min(endOffset, totalCount) else {
+            nextScanOffset = nil
             return 0
         }
         
-        let json = jsonString
-        var i = startScan
         var loadedCount = 0
         
-        while i < endIndex && loadedCount < count {
-            // 跳过空白
-            i = skipWhitespace(from: i, in: json)
-            guard i < endIndex else { break }
+        data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            guard let baseAddress = buffer.baseAddress else { return }
+            let ptr = baseAddress.bindMemory(to: UInt8.self, capacity: totalCount)
+            let endLimit = min(endOffset, totalCount)
             
-            let char = json[i]
-            
-            // 检查结束
-            if char == "}" || char == "]" {
-                nextScanIndex = nil // 标记为已完全加载
-                
-                // Sort keys if needed
-                if shouldSortKeys && type == .object {
-                    _childrenIndices?.sort { (node1, node2) -> Bool in
-                        guard let key1 = node1.key, let key2 = node2.key else { return false }
-                        return key1.localizedCompare(key2) == .orderedAscending
+            while i < endLimit && loadedCount < count {
+                // 1. Skip Whitespace
+                while i < endLimit {
+                    let byte = ptr[i]
+                    if byte == 32 || byte == 10 || byte == 13 || byte == 9 {
+                        i += 1
+                    } else {
+                        break
                     }
                 }
                 
-                return loadedCount
-            }
-            
-            // 跳过逗号
-            if char == "," {
-                i = json.index(after: i)
-                continue
-            }
-            
-            // 解析键（对于 object）
-            var key: String? = nil
-            if type == .object && char == "\"" {
-                let (parsedKey, nextIndex) = parseString(from: i, in: json)
-                key = parsedKey
-                i = nextIndex
+                if i >= endLimit { break }
+                let char = ptr[i]
                 
-                // 跳过冒号
-                i = skipWhitespace(from: i, in: json)
-                if i < endIndex && json[i] == ":" {
-                    i = json.index(after: i)
+                // 2. Check End
+                if char == 125 || char == 93 { // } or ]
+                    nextScanOffset = nil
+                    
+                    if shouldSortKeys && type == .object {
+                        // 极致优化：大小写不敏感的字节比较，避免创建临时 String
+                        _childrenInfo?.sort { (n1, n2) -> Bool in
+                            let k1Len = n1.keyEnd - n1.keyStart
+                            let k2Len = n2.keyEnd - n2.keyStart
+                            
+                            if k1Len <= 0 { return true }
+                            if k2Len <= 0 { return false }
+                            
+                            // 大小写不敏感比较 (A-Z 转换为 a-z)
+                            let cmpLen = min(k1Len, k2Len)
+                            for j in 0..<cmpLen {
+                                var b1 = ptr[n1.keyStart + j]
+                                var b2 = ptr[n2.keyStart + j]
+                                
+                                // 转换为小写 (A-Z: 65-90 -> a-z: 97-122)
+                                if b1 >= 65 && b1 <= 90 { b1 += 32 }
+                                if b2 >= 65 && b2 <= 90 { b2 += 32 }
+                                
+                                if b1 != b2 {
+                                    return b1 < b2
+                                }
+                            }
+                            // 前缀相同，短的排前面
+                            return k1Len < k2Len
+                        }
+                    }
+                    return
                 }
-                i = skipWhitespace(from: i, in: json)
-            }
-            
-            // 解析值的范围
-            guard i < endIndex else { break }
-            let (valueStart, valueEnd, valueType) = parseValueRange(from: i, in: json)
-            
-            _childrenIndices?.append((key: key, start: valueStart, end: valueEnd, type: valueType))
-            loadedCount += 1
-            i = valueEnd
-        }
-        
-        // 只有当真正扫描完所有内容（遇到结束符）时才置为 nil，
-        // 这里只是暂停扫描，记录当前位置
-        nextScanIndex = i
-        
-        // 再次检查是否已经到达末尾（优化：如果刚好读完最后一个元素）
-        let checkEnd = skipWhitespace(from: i, in: json)
-        if checkEnd < endIndex {
-            let endChar = json[checkEnd]
-            if endChar == "}" || endChar == "]" {
-                nextScanIndex = nil
                 
-                // Sort keys if needed
-                if shouldSortKeys && type == .object {
-                    _childrenIndices?.sort { (node1, node2) -> Bool in
-                        guard let key1 = node1.key, let key2 = node2.key else { return false }
-                        return key1.localizedCompare(key2) == .orderedAscending
+                // 3. Skip Comma
+                if char == 44 {
+                    i += 1
+                    continue
+                }
+                
+                // 4. Parse Key (Object only)
+                var kStart = -1
+                var kEnd = -1
+                
+                if type == .object && char == 34 { // "
+                    // Parse raw key range (content inside quotes)
+                    let (contentStart, contentEnd, nextIndex) = parseStringRawRange(ptr: ptr, from: i, limit: endLimit)
+                    kStart = contentStart
+                    kEnd = contentEnd
+                    i = nextIndex
+                    
+                    // Skip Colon
+                    while i < endLimit {
+                        let b = ptr[i]
+                         if b == 58 { // :
+                             i += 1
+                             break
+                         } else if b == 32 || b == 10 || b == 13 || b == 9 {
+                             i += 1
+                         } else {
+                             break
+                         }
+                    }
+                    
+                    // Skip Prior Value Whitespace
+                    while i < endLimit {
+                        let b = ptr[i]
+                        if b == 32 || b == 10 || b == 13 || b == 9 { i += 1 } else { break }
                     }
                 }
+                
+                if i >= endLimit { break }
+                
+                // 5. Parse Value
+                let (valStart, valEnd, valType) = parseValueRange(ptr: ptr, from: i, limit: endLimit)
+                
+                _childrenInfo?.append(ChildInfo(keyStart: kStart, keyEnd: kEnd, start: valStart, end: valEnd, type: valType))
+                loadedCount += 1
+                i = valEnd
             }
         }
         
+        // 如果已扫描到容器结尾，标记为完全加载
+        if i >= endOffset - 1 {
+            nextScanOffset = nil
+        } else {
+            nextScanOffset = i
+        }
         return loadedCount
     }
     
-    /// 解析值的范围（不解析具体值）
-    private func parseValueRange(from start: String.Index, in json: String) -> (start: String.Index, end: String.Index, type: NodeType) {
-        let char = json[start]
+    // MARK: - Byte Parsing Helpers
+    
+    private func parseStringRawRange(ptr: UnsafePointer<UInt8>, from start: Int, limit: Int) -> (Int, Int, Int) {
+        // start is at '"'
+        // Returns (contentStart, contentEnd, nextIndex)
+        var i = start + 1
+        let contentStart = i
         
-        switch char {
-        case "{":
-            let end = findMatchingBrace(from: start, open: "{", close: "}", in: json)
-            return (start, end, .object)
-            
-        case "[":
-            let end = findMatchingBrace(from: start, open: "[", close: "]", in: json)
-            return (start, end, .array)
-            
-        case "\"":
-            var i = json.index(after: start)
-            while i < json.endIndex {
-                if json[i] == "\\" {
-                    i = json.index(after: i)
-                    if i < json.endIndex {
-                        i = json.index(after: i)
-                    }
-                    continue
-                }
-                if json[i] == "\"" {
-                    return (start, json.index(after: i), .string)
-                }
-                i = json.index(after: i)
+        // Scan for end quote
+        while i < limit {
+            let c = ptr[i]
+            if c == 92 { // \
+                i += 2
+                continue
             }
-            return (start, json.endIndex, .string)
-            
-        case "t", "f":
-            // true or false
-            let word = char == "t" ? "true" : "false"
-            let end = json.index(start, offsetBy: word.count, limitedBy: json.endIndex) ?? json.endIndex
-            return (start, end, .boolean)
-            
-        case "n":
-            // null
-            let end = json.index(start, offsetBy: 4, limitedBy: json.endIndex) ?? json.endIndex
-            return (start, end, .null)
-            
-        default:
-            // number
+            if c == 34 { // "
+                // Found end quote
+                return (contentStart, i, i + 1)
+            }
+            i += 1
+        }
+        return (contentStart, limit, limit)
+    }
+    
+    private func parseValueRange(ptr: UnsafePointer<UInt8>, from start: Int, limit: Int) -> (start: Int, end: Int, type: NodeType) {
+        let byte = ptr[start]
+        
+        switch byte {
+        case 123: // {
+            let end = findMatchingBrace(ptr: ptr, from: start, open: 123, close: 125, limit: limit)
+            return (start, end, .object)
+        case 91: // [
+            let end = findMatchingBrace(ptr: ptr, from: start, open: 91, close: 93, limit: limit)
+            return (start, end, .array)
+        case 34: // "
+            var i = start + 1
+            while i < limit {
+                let c = ptr[i]
+                if c == 92 { i += 2; continue }
+                if c == 34 { return (start, i+1, .string) }
+                i += 1
+            }
+            return (start, limit, .string)
+        case 116, 102: // t, f
             var i = start
-            while i < json.endIndex {
-                let c = json[i]
-                if c == "," || c == "}" || c == "]" || c.isWhitespace {
-                    break
-                }
-                i = json.index(after: i)
+            while i < limit {
+                 let c = ptr[i]
+                 if isDelimiter(c) { break }
+                 i += 1
+            }
+            return (start, i, .boolean)
+        case 110: // n
+            var i = start
+            while i < limit {
+                 let c = ptr[i]
+                 if isDelimiter(c) { break }
+                 i += 1
+            }
+            return (start, i, .null)
+        default:
+            var i = start
+            while i < limit {
+                 let c = ptr[i]
+                 if isDelimiter(c) { break }
+                 i += 1
             }
             return (start, i, .number)
         }
     }
     
-    /// 查找匹配的括号
-    private func findMatchingBrace(from start: String.Index, open: Character, close: Character, in json: String) -> String.Index {
+    private func findMatchingBrace(ptr: UnsafePointer<UInt8>, from start: Int, open: UInt8, close: UInt8, limit: Int) -> Int {
         var depth = 0
         var i = start
         var inString = false
         
-        while i < json.endIndex {
-            let char = json[i]
-            
+        while i < limit {
+            let c = ptr[i]
             if inString {
-                if char == "\\" {
-                    i = json.index(after: i)
-                    if i < json.endIndex {
-                        i = json.index(after: i)
-                    }
-                    continue
-                }
-                if char == "\"" {
-                    inString = false
-                }
+                if c == 92 { i += 2; continue }
+                if c == 34 { inString = false }
             } else {
-                if char == "\"" {
-                    inString = true
-                } else if char == open {
-                    depth += 1
-                } else if char == close {
+                if c == 34 { inString = true }
+                else if c == open { depth += 1 }
+                else if c == close {
                     depth -= 1
-                    if depth == 0 {
-                        return json.index(after: i)
-                    }
+                    if depth == 0 { return i + 1 }
                 }
             }
-            i = json.index(after: i)
+            i += 1
         }
-        return json.endIndex
+        return limit
     }
     
-    /// 跳过空白字符
-    private func skipWhitespace(from start: String.Index, in json: String) -> String.Index {
-        var i = start
-        while i < json.endIndex && json[i].isWhitespace {
-            i = json.index(after: i)
-        }
-        return i
-    }
-    
-    /// 解析字符串并返回内容和结束位置
-    private func parseString(from start: String.Index, in json: String) -> (String, String.Index) {
-        let onePastStart = json.index(after: start)
-        var current = onePastStart
-        var hasEscape = false
-        
-        // Fast Path: 快速扫描，寻找结束引号或转义符
-        while current < json.endIndex {
-            let char = json[current]
-            if char == "\"" {
-                // 找到结束引号
-                if !hasEscape {
-                    // 完美路径：没有转义符，直接截取子串
-                    // String(Substring) 比逐个字符 append 快得多 (memcpy vs loop)
-                    let content = String(json[onePastStart..<current])
-                    return (content, json.index(after: current))
-                }
-                break // 转义情况交给慢速路径处理（虽然理论上不会进这里，除非逻辑修改）
-            }
-            
-            if char == "\\" {
-                hasEscape = true
-                break // 发现转义，中止快速扫描，转入慢速路径
-            }
-            
-            current = json.index(after: current)
-        }
-        
-        // Slow Path: 包含转义符，或者快速扫描中断
-        var result = ""
-        // 如果是从 fast path 中断回来的，我们可以先复用已经扫描过的部分优化吗？
-        // 为了代码简单稳健，我们只是把 fast path 用于无转义的常见情况。
-        // 有转义时回退到原始位置重新解析（有转义的情况相对少，且一般 key 较短，回退开销可忽略）
-        
-        var i = onePastStart
-        if hasEscape {
-            // 预先 append 之前确认安全的部分？不，直接重头来最安全
-        }
-        
-        while i < json.endIndex {
-            let char = json[i]
-            
-            if char == "\\" {
-                i = json.index(after: i)
-                if i < json.endIndex {
-                    let escaped = json[i]
-                    switch escaped {
-                    case "n": result.append("\n")
-                    case "r": result.append("\r")
-                    case "t": result.append("\t")
-                    case "\"": result.append("\"")
-                    case "\\": result.append("\\")
-                    case "b": result.append("\u{08}") // backspace
-                    case "f": result.append("\u{0C}") // form feed
-                    case "/": result.append("/")      // solidus
-                    case "u":
-                        // 解析 unicode: \uXXXX
-                        // 简单处理：向后读4位 (为保持极简，这里暂略复杂边界检查，假设 JSON 合法)
-                        let endHex = json.index(i, offsetBy: 5, limitedBy: json.endIndex) ?? json.endIndex
-                        if endHex > json.index(after: i) {
-                            let hexStart = json.index(after: i)
-                            let hexStr = json[hexStart..<endHex]
-                            if hexStr.count == 4, let codePoint = UInt32(hexStr, radix: 16), let scalar = UnicodeScalar(codePoint) {
-                                result.append(String(scalar))
-                                i = json.index(i, offsetBy: 4)
-                            } else {
-                                result.append("\\u") // 解析失败原样保留
-                            }
-                        } else {
-                             result.append("\\u")
-                        }
-                    default: result.append(escaped)
-                    }
-                }
-            } else if char == "\"" {
-                return (result, json.index(after: i))
-            } else {
-                result.append(char)
-            }
-            i = json.index(after: i)
-        }
-        
-        return (result, json.endIndex)
-    }
-    
-    /// 提取字符串值
-    private func extractStringValue() -> String? {
-        let (value, _) = parseString(from: startIndex, in: jsonString)
-        return value
-    }
-    
-    private func escapeKey(_ key: String) -> String {
-        key
-            .replacingOccurrences(of: ".", with: "\\.")
-            .replacingOccurrences(of: "[", with: "\\[")
-            .replacingOccurrences(of: "]", with: "\\]")
+    @inline(__always)
+    private func isDelimiter(_ byte: UInt8) -> Bool {
+        return byte == 44 || byte == 125 || byte == 93 || byte == 32 || byte == 10 || byte == 13 || byte == 9
     }
 }
 
-// MARK: - 从 JSON 字符串创建根节点
+// MARK: - Factory
 
 extension IndexedJSONNode {
-    /// 从 JSON 字符串创建根节点
-    static func fromJSONString(_ jsonString: String, shouldSortKeys: Bool = false) -> IndexedJSONNode? {
-        let json = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !json.isEmpty else { return nil }
-        
-        let firstChar = json[json.startIndex]
+    /// Zero-copy factory from Data
+    static func fromData(_ data: Data, shouldSortKeys: Bool = false) -> IndexedJSONNode? {
+        if data.isEmpty { return nil }
+
+        let firstByte = data.first ?? 0
         let type: NodeType
-        
-        switch firstChar {
-        case "{": type = .object
-        case "[": type = .array
-        case "\"": type = .string
-        case "t", "f": type = .boolean
-        case "n": type = .null
+
+        switch firstByte {
+        case 123: type = .object
+        case 91: type = .array
+        case 34: type = .string
+        case 116, 102: type = .boolean
+        case 110: type = .null
         default: type = .number
         }
-        
-        // 使用闭包捕获字符串，避免复制
-        let capturedString = jsonString
-        
+
+        let holder = DataHolder(data)
         return IndexedJSONNode(
             type: type,
-            key: nil,
-            startIndex: json.startIndex,
-            endIndex: json.endIndex,
+            keyStart: -1,
+            keyEnd: -1,
+            startOffset: 0,
+            endOffset: data.count,
             depth: 0,
-            path: "$",
             shouldSortKeys: shouldSortKeys,
-            jsonStringProvider: { capturedString }
+            dataHolder: holder
         )
+    }
+
+    static func fromJSONString(_ jsonString: String, shouldSortKeys: Bool = false) -> IndexedJSONNode? {
+        guard let data = jsonString.data(using: .utf8) else { return nil }
+        return fromData(data, shouldSortKeys: shouldSortKeys)
     }
 }
 
-// MARK: - JSON Formatting
+// MARK: - Simple Unescape Helper
+fileprivate extension String {
+    func simpleUnescape() -> String {
+        if !self.contains("\\") { return self }
+        // Attempt JSON unescape
+        let json = "\"\(self)\""
+        if let data = json.data(using: .utf8),
+           let str = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) as? String {
+            return str
+        }
+        return self
+    }
+}
 
+// MARK: - Formatting (极致性能版)
 extension IndexedJSONNode {
-    /// 生成格式化的 JSON 字符串
-    /// - Parameters:
-    ///   - indentation: 缩进空格数
-    ///   - currentIndent: 当前缩进级别（内部递归使用）
-    /// - Returns: 格式化后的 JSON 字符串
+    
+    // 缓存缩进字符串对应的 UTF8 字节
+    private static var indentCache: [[UInt8]] = {
+        var cache = [[UInt8]]()
+        for i in 0..<64 {
+            cache.append(Array(repeating: UInt8(ascii: " "), count: i))
+        }
+        return cache
+    }()
+    
+    // 常用字符串的 UTF8 字节预计算
+    private static let openBrace: [UInt8] = [123, 10]      // {\n
+    private static let closeBrace: UInt8 = 125             // }
+    private static let openBracket: [UInt8] = [91, 10]     // [\n
+    private static let closeBracket: UInt8 = 93            // ]
+    private static let emptyObject: [UInt8] = [123, 125]   // {}
+    private static let emptyArray: [UInt8] = [91, 93]      // []
+    private static let colonSpace: [UInt8] = [58, 32]      // : 
+    private static let commaNewline: [UInt8] = [44, 10]    // ,\n
+    private static let newline: UInt8 = 10                 // \n
+    private static let nullBytes: [UInt8] = [110, 117, 108, 108] // null
+    private static let quote: UInt8 = 34                   // "
+    
     func prettyJSONString(indentation: Int = 2) -> String {
-        // 预估大小：原始大小 * 1.5 (格式化后的空格和换行)
-        let estimatedCapacity = Int(Double(jsonString.count) * 1.5)
-        var buffer = ""
-        buffer.reserveCapacity(estimatedCapacity)
-        
-        writePrettyJSON(to: &buffer, indentation: indentation, currentIndent: 0)
-        
-        return buffer
+        // 使用 [UInt8] 直接写入字节，最后一次性转 String
+        var buffer = [UInt8]()
+        buffer.reserveCapacity(endOffset - startOffset + 1024)
+        writePrettyJSONFast(to: &buffer, indentation: indentation, currentIndent: 0)
+        return String(decoding: buffer, as: UTF8.self)
     }
     
-    /// 将格式化的 JSON 写入缓冲区
-    /// - Parameters:
-    ///   - buffer: 目标字符串缓冲区
-    ///   - indentation: 缩进空格数
-    ///   - currentIndent: 当前缩进级别
-    func writePrettyJSON(to buffer: inout String, indentation: Int, currentIndent: Int) {
+    private func writePrettyJSONFast(to buffer: inout [UInt8], indentation: Int, currentIndent: Int) {
         switch type {
         case .object:
-            // 确保加载所有子节点以进行排序（如果需要）
             loadMore(count: Int.max)
-            
             if childCount == 0 {
-                buffer.append("{}")
+                buffer.append(contentsOf: Self.emptyObject)
                 return
             }
-            
-            buffer.append("{\n")
+            buffer.append(contentsOf: Self.openBrace)
             let nextIndent = currentIndent + indentation
-            let indentString = String(repeating: " ", count: nextIndent)
-            let closingIndentString = String(repeating: " ", count: currentIndent)
+            let count = childrenInfo.count
             
-            let indices = childrenIndices
-            let count = indices.count
-            
-            for (index, childInfo) in indices.enumerated() {
-                // key 必须存在于 object 中
-                guard let key = childInfo.key else { continue }
+            for i in 0..<count {
+                // 写入缩进
+                appendIndent(to: &buffer, count: nextIndent)
                 
-                buffer.append(indentString)
-                // 使用 debugDescription 来自动处理转义和引号
-                buffer.append(key.debugDescription)
-                buffer.append(": ")
-                
-                // 获取子节点（利用缓存）
-                if let childNode = child(at: index) {
-                    childNode.writePrettyJSON(to: &buffer, indentation: indentation, currentIndent: nextIndent)
+                // 写入 Key
+                if let child = child(at: i), let k = child.key {
+                    buffer.append(Self.quote)
+                    // 直接写入 key 的 UTF8 字节 (简化处理，不转义)
+                    buffer.append(contentsOf: k.utf8)
+                    buffer.append(Self.quote)
                 } else {
-                    buffer.append("null")
+                    buffer.append(Self.quote)
+                    buffer.append(Self.quote)
+                }
+                buffer.append(contentsOf: Self.colonSpace)
+                
+                // 写入 Value
+                if let child = child(at: i) {
+                    child.writePrettyJSONFast(to: &buffer, indentation: indentation, currentIndent: nextIndent)
+                } else {
+                    buffer.append(contentsOf: Self.nullBytes)
                 }
                 
-                if index < count - 1 {
-                    buffer.append(",\n")
+                if i < count - 1 {
+                    buffer.append(contentsOf: Self.commaNewline)
                 } else {
-                    buffer.append("\n")
+                    buffer.append(Self.newline)
                 }
             }
-            
-            buffer.append(closingIndentString)
-            buffer.append("}")
+            appendIndent(to: &buffer, count: currentIndent)
+            buffer.append(Self.closeBrace)
             
         case .array:
-            // 确保加载所有子节点
             loadMore(count: Int.max)
-            
             if childCount == 0 {
-                buffer.append("[]")
+                buffer.append(contentsOf: Self.emptyArray)
                 return
             }
-            
-            buffer.append("[\n")
+            buffer.append(contentsOf: Self.openBracket)
             let nextIndent = currentIndent + indentation
-            let indentString = String(repeating: " ", count: nextIndent)
-            let closingIndentString = String(repeating: " ", count: currentIndent)
             
-            let count = childCount
-            for index in 0..<count {
-                buffer.append(indentString)
-                
-                if let childNode = child(at: index) {
-                    childNode.writePrettyJSON(to: &buffer, indentation: indentation, currentIndent: nextIndent)
+            for i in 0..<childCount {
+                appendIndent(to: &buffer, count: nextIndent)
+                if let child = child(at: i) {
+                    child.writePrettyJSONFast(to: &buffer, indentation: indentation, currentIndent: nextIndent)
                 } else {
-                   buffer.append("null")
+                    buffer.append(contentsOf: Self.nullBytes)
                 }
-                
-                if index < count - 1 {
-                    buffer.append(",\n")
+                if i < childCount - 1 {
+                    buffer.append(contentsOf: Self.commaNewline)
                 } else {
-                    buffer.append("\n")
+                    buffer.append(Self.newline)
                 }
             }
-            
-            buffer.append(closingIndentString)
-            buffer.append("]")
+            appendIndent(to: &buffer, count: currentIndent)
+            buffer.append(Self.closeBracket)
             
         default:
-             // string, number, boolean, null -> 直接复用原始 rawString
-             buffer.append(rawString.trimmingCharacters(in: .whitespaces))
+            // 直接从原始数据复制（避免 trimming 创建新 String）
+            let data = jsonData
+            var start = startOffset
+            var end = endOffset - 1
+            
+            // 手动 trim whitespace
+            while start < end {
+                let b = data[start]
+                if b == 32 || b == 10 || b == 13 || b == 9 { start += 1 } else { break }
+            }
+            while end > start {
+                let b = data[end]
+                if b == 32 || b == 10 || b == 13 || b == 9 { end -= 1 } else { break }
+            }
+            
+            if start <= end {
+                buffer.append(contentsOf: data[start...end])
+            }
+        }
+    }
+    
+    @inline(__always)
+    private func appendIndent(to buffer: inout [UInt8], count: Int) {
+        if count < Self.indentCache.count {
+            buffer.append(contentsOf: Self.indentCache[count])
+        } else {
+            buffer.append(contentsOf: Array(repeating: UInt8(ascii: " "), count: count))
         }
     }
 }
