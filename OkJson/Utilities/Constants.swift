@@ -11,7 +11,7 @@ enum Constants {
     // MARK: - App Info
 
     static let appName = "OkJson"
-    static let appVersion = "1.0.0"
+    static let appVersion = "1.1.0"
 
     // MARK: - File Size Limits
 
@@ -25,6 +25,17 @@ enum Constants {
 
     /// Maximum nesting depth for default expansion
     static let defaultMaxDepth: Int = 3
+
+    // MARK: - 大值截断
+
+    /// 字符串值超过此字节数时截断显示（默认 200 字符）
+    static let valueTruncationThreshold: Int = 200
+
+    /// 截断后保留的前缀长度
+    static let truncationPrefixLength: Int = 80
+
+    /// 截断后保留的后缀长度
+    static let truncationSuffixLength: Int = 40
 
     /// Indentation options
     static let indentationOptions = [2, 4]
@@ -64,5 +75,7 @@ enum Constants {
         static let formatSettingsChanged = Notification.Name("OkJson.formatSettingsChanged")
         /// 显示设置变化通知（行号等）
         static let displaySettingsChanged = Notification.Name("OkJson.displaySettingsChanged")
+        /// 主题变化通知
+        static let themeChanged = Notification.Name("OkJson.themeChanged")
     }
 }

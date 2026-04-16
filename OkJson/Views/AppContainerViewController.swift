@@ -21,45 +21,78 @@ class AppContainerViewController: NSViewController {
         return view
     }()
     
-    // 左侧：设置展示区域
-    private lazy var settingsLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "")
-        label.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        label.textColor = .secondaryLabelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
+    // 左侧：内联设置控件
+    private lazy var themeButton: NSButton = {
+        let button = NSButton(image: NSImage(systemSymbolName: Theme.current.iconName, accessibilityDescription: "切换主题")!, target: self, action: #selector(onThemeClicked))
+        button.bezelStyle = .recessed
+        button.isBordered = false
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.toolTip = "切换亮色/暗色主题"
+        return button
     }()
     
-    // 中间：功能按钮区域（对比模式专用）
-    private lazy var syncScrollButton: NSButton = {
-        let button = NSButton(title: "Sync", target: self, action: #selector(onSyncScrollClicked))
+    private lazy var indentButton: NSPopUpButton = {
+        let popup = NSPopUpButton()
+        popup.addItems(withTitles: ["2 sp", "4 sp"])
+        popup.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        popup.controlSize = .small
+        popup.bezelStyle = .recessed
+        popup.isBordered = false
+        popup.target = self
+        popup.action = #selector(onIndentChanged(_:))
+        popup.translatesAutoresizingMaskIntoConstraints = false
+        popup.toolTip = "缩进空格数"
+        
+        let current = UserDefaults.standard.integer(forKey: Constants.UserDefaultsKeys.indentation)
+        popup.selectItem(at: current == 4 ? 1 : 0)
+        return popup
+    }()
+    
+    private lazy var sortButton: NSButton = {
+        let button = NSButton(image: NSImage(systemSymbolName: "textformat.abc", accessibilityDescription: "按字母排序 Key")!, target: self, action: #selector(onSortClicked))
         button.bezelStyle = .recessed
         button.setButtonType(.pushOnPushOff)
-        button.image = NSImage(systemSymbolName: "lock", accessibilityDescription: "Sync Scroll")
+        button.isBordered = false
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.toolTip = "按字母排序 JSON Key"
+        button.state = UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.sortKeys) ? .on : .off
         return button
     }()
     
-    private lazy var swapButton: NSButton = {
-        let button = NSButton(title: "Swap", target: self, action: #selector(onSwapClicked))
+    private lazy var lineNumberButton: NSButton = {
+        let button = NSButton(image: NSImage(systemSymbolName: "list.number", accessibilityDescription: "显示行号")!, target: self, action: #selector(onLineNumberClicked))
         button.bezelStyle = .recessed
-        button.image = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: "Swap")
+        button.setButtonType(.pushOnPushOff)
+        button.isBordered = false
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.toolTip = "显示/隐藏行号"
+        
+        // 读取初始值
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: Constants.UserDefaultsKeys.lineNumbers) != nil {
+            button.state = defaults.bool(forKey: Constants.UserDefaultsKeys.lineNumbers) ? .on : .off
+        } else {
+            button.state = .on // 默认开启
+        }
         return button
     }()
     
-    private lazy var compareButton: NSButton = {
-        let button = NSButton(title: "Compare", target: self, action: #selector(onCompareClicked))
+    // 中间：功能按钮区域（多列模式专用）
+    private lazy var syncScrollButton: NSButton = {
+        let button = NSButton(title: "同步滚动", target: self, action: #selector(onSyncScrollClicked))
         button.bezelStyle = .recessed
-        button.image = NSImage(systemSymbolName: "arrow.left.arrow.right", accessibilityDescription: "Compare")
-        button.keyEquivalent = "\r"
+        button.setButtonType(.pushOnPushOff) // Toggle behavior
+        button.image = NSImage(systemSymbolName: "lock", accessibilityDescription: "同步滚动")
+        button.imagePosition = .imageLeft
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
     
-    // 右侧：Tips 轮播区域
-    private lazy var tipsLabel: NSTextField = {
-        let label = NSTextField(labelWithString: "")
+
+    
+    // 右侧：快捷键提示区域（固定显示，不轮播）
+    private lazy var shortcutsLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "⌘V 粘贴 · ⌘F 搜索 · ⌘R 格式化 · ⌘D 添加列 · ⌘⇧W 适应宽度")
         label.font = .systemFont(ofSize: 11, weight: .regular)
         label.textColor = .tertiaryLabelColor
         label.alignment = .right
@@ -67,18 +100,9 @@ class AppContainerViewController: NSViewController {
         return label
     }()
     
-    private let tips = [
-        "⌘V 粘贴 JSON",
-        "⌘F 格式化",
-        "⌘⇧C 复制结果",
-        "⌘S 排序 Key",
-        "⌘⇧F 复制格式化"
-    ]
-    private var currentTipIndex = 0
-    private var tipsTimer: Timer?
-    
     private var footerHeightConstraint: NSLayoutConstraint!
     private var centerStackView: NSStackView!
+    private var leftStackView: NSStackView!
     
     // MARK: - Initialization
     
@@ -102,9 +126,17 @@ class AppContainerViewController: NSViewController {
         super.viewDidLoad()
         setupUI()
         setupObservation()
-        setupSettingsObservation()
-        updateSettingsLabel()
-        startTipsTimer()
+
+        // 监听列数变化，更新底栏按钮可见性
+        mainViewController.onColumnCountChanged = { [weak self] count in
+            self?.updateFooterVisibility()
+        }
+
+        // 初始状态
+        updateFooterVisibility()
+
+        // 应用保存的主题
+        Theme.current.apply()
     }
     
     // MARK: - Setup
@@ -153,142 +185,94 @@ class AppContainerViewController: NSViewController {
             separator.heightAnchor.constraint(equalToConstant: 1),
         ])
         
-        // 左侧：设置展示
-        footerView.addSubview(settingsLabel)
+        // 左侧：内联设置控件
+        leftStackView = NSStackView(views: [themeButton, indentButton, sortButton, lineNumberButton])
+        leftStackView.orientation = .horizontal
+        leftStackView.spacing = 12
+        leftStackView.translatesAutoresizingMaskIntoConstraints = false
+        footerView.addSubview(leftStackView)
         
         // 中间：功能按钮 Stack
-        centerStackView = NSStackView(views: [syncScrollButton, swapButton, compareButton])
+        centerStackView = NSStackView(views: [syncScrollButton])
         centerStackView.orientation = .horizontal
         centerStackView.spacing = 8
         centerStackView.translatesAutoresizingMaskIntoConstraints = false
         footerView.addSubview(centerStackView)
         
-        // 右侧：Tips 轮播
-        footerView.addSubview(tipsLabel)
-        
+        // 右侧：快捷键提示
+        footerView.addSubview(shortcutsLabel)
+
         NSLayoutConstraint.activate([
             // 左侧
-            settingsLabel.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 12),
-            settingsLabel.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
-            settingsLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 200),
-            
+            leftStackView.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 8),
+            leftStackView.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
+
             // 中间
             centerStackView.centerXAnchor.constraint(equalTo: footerView.centerXAnchor),
             centerStackView.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
-            
+
             // 右侧
-            tipsLabel.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -12),
-            tipsLabel.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
-            tipsLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 150),
+            shortcutsLabel.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -12),
+            shortcutsLabel.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
         ])
     }
     
-    private var isObserving = false
-    
     private func setupObservation() {
-        if !isObserving {
-            mainViewController.addObserver(self, forKeyPath: "selectedTabViewItemIndex", options: [.new, .initial], context: nil)
-            isObserving = true
-        }
-    }
-    
-    private func setupSettingsObservation() {
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleSettingsChanged),
-            name: Constants.Notifications.formatSettingsChanged,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSettingsChanged),
-            name: Constants.Notifications.displaySettingsChanged,
+            selector: #selector(handleThemeChanged),
+            name: Constants.Notifications.themeChanged,
             object: nil
         )
     }
     
-    @objc private func handleSettingsChanged() {
-        updateSettingsLabel()
-    }
-    
-    private func updateSettingsLabel() {
-        let defaults = UserDefaults.standard
-        let indentation = defaults.integer(forKey: Constants.UserDefaultsKeys.indentation)
-        let spaces = indentation > 0 ? indentation : 2
-        let lineNumbers = defaults.bool(forKey: Constants.UserDefaultsKeys.lineNumbers)
-        
-        settingsLabel.stringValue = "Spaces: \(spaces) | Lines: \(lineNumbers ? "ON" : "OFF")"
-    }
-    
-    private func startTipsTimer() {
-        updateTipsLabel()
-        tipsTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.rotateTip()
+    @objc private func handleThemeChanged() {
+        let appearance = NSApp.effectiveAppearance
+        appearance.performAsCurrentDrawingAppearance {
+            footerView.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         }
     }
-    
-    private func updateTipsLabel() {
-        tipsLabel.stringValue = tips[currentTipIndex]
-    }
-    
-    private func rotateTip() {
-        currentTipIndex = (currentTipIndex + 1) % tips.count
-        
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            tipsLabel.animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            self?.updateTipsLabel()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2
-                self?.tipsLabel.animator().alphaValue = 1
-            }
-        }
-    }
-    
-    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
-        if keyPath == "selectedTabViewItemIndex" {
-            updateFooterVisibility()
-        } else {
-            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
-        }
-    }
-    
+
     deinit {
-        tipsTimer?.invalidate()
-        if isObserving {
-            mainViewController.removeObserver(self, forKeyPath: "selectedTabViewItemIndex")
-        }
         NotificationCenter.default.removeObserver(self)
     }
     
     // MARK: - Logic
     
     private func updateFooterVisibility() {
-        let isCompareMode = mainViewController.selectedTabViewItemIndex == 1
-        centerStackView?.isHidden = !isCompareMode
+        let isMultiColumn = mainViewController.columnCount > 1
+        centerStackView?.isHidden = !isMultiColumn
     }
     
     // MARK: - Actions
     
-    private var comparisonController: ComparisonSplitViewController? {
-        guard mainViewController.tabViewItems.count > 1,
-              let vc = mainViewController.tabViewItems[1].viewController as? ComparisonSplitViewController else {
-            return nil
-        }
-        return vc
+    @objc private func onThemeClicked() {
+        let next = Theme.current.next
+        Theme.current = next
+        themeButton.image = NSImage(systemSymbolName: next.iconName, accessibilityDescription: "切换主题")
+    }
+    
+    @objc private func onIndentChanged(_ sender: NSPopUpButton) {
+        let value = sender.indexOfSelectedItem == 1 ? 4 : 2
+        UserDefaults.standard.set(value, forKey: Constants.UserDefaultsKeys.indentation)
+        NotificationCenter.default.post(name: Constants.Notifications.formatSettingsChanged, object: nil)
+    }
+    
+    @objc private func onSortClicked() {
+        let isOn = sortButton.state == .on
+        UserDefaults.standard.set(isOn, forKey: Constants.UserDefaultsKeys.sortKeys)
+        NotificationCenter.default.post(name: Constants.Notifications.formatSettingsChanged, object: nil)
+    }
+    
+    @objc private func onLineNumberClicked() {
+        let isOn = lineNumberButton.state == .on
+        UserDefaults.standard.set(isOn, forKey: Constants.UserDefaultsKeys.lineNumbers)
+        NotificationCenter.default.post(name: Constants.Notifications.displaySettingsChanged, object: nil)
     }
     
     @objc private func onSyncScrollClicked() {
-        comparisonController?.toggleSyncScroll(enabled: syncScrollButton.state == .on)
+        mainViewController.toggleSyncScroll(enabled: syncScrollButton.state == .on)
     }
     
-    @objc private func onSwapClicked() {
-        comparisonController?.swapContent()
-    }
-    
-    @objc private func onCompareClicked() {
-        comparisonController?.performCompare()
-    }
-}
 
+}

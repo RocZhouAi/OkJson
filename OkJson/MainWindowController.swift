@@ -19,15 +19,13 @@ class MainWindowController: NSWindowController {
         )
         window.title = "OkJson"
         window.titlebarAppearsTransparent = true
-        window.toolbarStyle = .unified // Use unified style for the modern look
+        window.toolbarStyle = .unified
         window.minSize = NSSize(width: 800, height: 600)
         
         // 设置内容视图控制器
         let mainVC = MainViewController()
         let containerVC = AppContainerViewController(mainViewController: mainVC)
         window.contentViewController = containerVC
-        
-
         
         // Window Restoration Configuration
         window.identifier = NSUserInterfaceItemIdentifier("OkJsonMainWindow")
@@ -44,6 +42,15 @@ class MainWindowController: NSWindowController {
         
         // 配置 Toolbar
         configureToolbar()
+        
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleDocumentModified),
+            name: .documentModified, object: nil
+        )
+    }
+    
+    @objc private func handleDocumentModified() {
+        window?.isDocumentEdited = true
     }
     
     // MARK: - Manual Persistence
@@ -52,7 +59,6 @@ class MainWindowController: NSWindowController {
         guard let window = window else { return }
         let frameString = NSStringFromRect(window.frame)
         UserDefaults.standard.set(frameString, forKey: "ManualWindowFrame_OkJson")
-
     }
     
     private func restoreWindowFrame() {
@@ -61,106 +67,189 @@ class MainWindowController: NSWindowController {
         if let frameString = UserDefaults.standard.string(forKey: "ManualWindowFrame_OkJson") {
             let frame = NSRectFromString(frameString)
             if frame.width > 0 && frame.height > 0 {
-
                 window.setFrame(frame, display: true)
                 return
             }
         }
         
-
         window.center()
     }
     
     override func windowDidLoad() {
         super.windowDidLoad()
-
     }
     
     private func configureToolbar() {
         let toolbar = NSToolbar(identifier: "MainToolbar")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        // 让分段控件居中
-        toolbar.centeredItemIdentifier = .modeSwitch
         
         window?.toolbar = toolbar
         window?.toolbarStyle = .unified
         window?.titleVisibility = .hidden
     }
     
-    @objc private func onModeChanged(_ sender: NSSegmentedControl) {
-        appContainerViewController.mainViewController.selectedTabViewItemIndex = sender.selectedSegment
+    @objc private func onAddColumnClicked() {
+        appContainerViewController.mainViewController.addColumn()
+    }
+
+    // MARK: - Open File
+
+    func openFile(_ path: String) -> Bool {
+        guard let data = FileManager.default.contents(atPath: path),
+              let content = String(data: data, encoding: .utf8) else {
+            return false
+        }
+
+        let fileURL = URL(fileURLWithPath: path)
+        let fileName = fileURL.lastPathComponent
+        let mainVC = appContainerViewController.mainViewController
+
+        // 当前焦点栏为空则复用，否则新增一栏
+        if let focused = mainVC.focusedColumn,
+           focused.viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            focused.viewModel.inputText = content
+            focused.viewModel.formatJSON()
+            focused.viewModel.columnTitle = fileName
+            focused.viewModel.sourceFilePath = path
+            focused.viewModel.isModifiedSinceFileOpen = false
+        } else {
+            mainVC.addColumn(content: content, title: fileName)
+            if let lastColumn = mainVC.columns.last {
+                lastColumn.viewModel.sourceFilePath = path
+                lastColumn.viewModel.isModifiedSinceFileOpen = false
+            }
+        }
+
+        window?.representedURL = fileURL
+        window?.title = fileName
+        window?.isDocumentEdited = false
+
+        return true
     }
     
-    @objc private func onSettingsClicked() {
-        appContainerViewController.mainViewController.selectedTabViewItemIndex = 2
-        // 取消选中分段控件，表明当前不在 Format/Compare 模式
-        if let modeSwitchItem = window?.toolbar?.items.first(where: { $0.itemIdentifier == .modeSwitch }),
-           let control = modeSwitchItem.view as? NSSegmentedControl {
-            control.selectedSegment = -1
+    // MARK: - Save
+    
+    /// 检查是否有未保存的修改，弹出保存提示。返回 true 表示可以继续关闭。
+    func handleUnsavedChanges() -> Bool {
+        let mainVC = appContainerViewController.mainViewController
+        let unsavedColumns = mainVC.columns.filter {
+            $0.viewModel.sourceFilePath != nil && $0.viewModel.isModifiedSinceFileOpen
         }
+        guard !unsavedColumns.isEmpty else { return true }
+        
+        let fileNames = unsavedColumns.compactMap {
+            URL(fileURLWithPath: $0.viewModel.sourceFilePath!).lastPathComponent
+        }
+        
+        let alert = NSAlert()
+        alert.messageText = "要保存对文件的修改吗？"
+        if fileNames.count == 1 {
+            alert.informativeText = "文件「\(fileNames[0])」已修改。如果不保存，你的更改将会丢失。"
+        } else {
+            alert.informativeText = "以下文件已修改：\(fileNames.joined(separator: "、"))。如果不保存，你的更改将会丢失。"
+        }
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "不保存")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .warning
+        
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            for column in unsavedColumns {
+                if !column.viewModel.saveToSourceFile() {
+                    let errAlert = NSAlert()
+                    errAlert.messageText = "保存失败"
+                    errAlert.informativeText = "无法写入文件：\(column.viewModel.sourceFilePath ?? "")"
+                    errAlert.alertStyle = .critical
+                    errAlert.runModal()
+                    return false
+                }
+            }
+            return true
+        case .alertSecondButtonReturn:
+            // 用户选择不保存，标记为已处理，避免 applicationShouldTerminate 再次弹窗
+            for column in unsavedColumns {
+                column.viewModel.isModifiedSinceFileOpen = false
+            }
+            return true
+        default:
+            return false
+        }
+    }
+    
+    /// 保存焦点列对应的源文件
+    func saveFocusedColumn() {
+        let mainVC = appContainerViewController.mainViewController
+        guard let focused = mainVC.focusedColumn,
+              focused.viewModel.sourceFilePath != nil else { return }
+        
+        if focused.viewModel.saveToSourceFile() {
+            updateDocumentEditedState()
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "保存失败"
+            alert.informativeText = "无法写入文件：\(focused.viewModel.sourceFilePath ?? "")"
+            alert.alertStyle = .critical
+            alert.runModal()
+        }
+    }
+    
+    private func updateDocumentEditedState() {
+        let mainVC = appContainerViewController.mainViewController
+        let hasUnsaved = mainVC.columns.contains {
+            $0.viewModel.sourceFilePath != nil && $0.viewModel.isModifiedSinceFileOpen
+        }
+        window?.isDocumentEdited = hasUnsaved
     }
 }
 
 
 extension MainWindowController: NSWindowDelegate {
     func windowDidResize(_ notification: Notification) {
-
         saveWindowFrame()
     }
     
     func windowDidMove(_ notification: Notification) {
-         // Optionally save on move too if you want to remember position
-         // saveWindowFrame()
+    }
+    
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        return handleUnsavedChanges()
     }
     
     func windowWillClose(_ notification: Notification) {
-
         saveWindowFrame()
     }
 }
 
 extension NSToolbarItem.Identifier {
-    static let modeSwitch = NSToolbarItem.Identifier("com.okjson.modeSwitch")
-    static let settings = NSToolbarItem.Identifier("com.okjson.settings")
+    static let addColumn = NSToolbarItem.Identifier("com.okjson.addColumn")
 }
 
 extension MainWindowController: NSToolbarDelegate {
     
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        // 布局：(Flexible) - [Format | Compare] - (Flexible) - [Settings]
-        return [.flexibleSpace, .modeSwitch, .flexibleSpace, .settings]
+        return [.flexibleSpace, .addColumn]
     }
     
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        return [.modeSwitch, .settings, .flexibleSpace]
+        return [.addColumn, .flexibleSpace]
     }
     
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         
-        if itemIdentifier == .modeSwitch {
+        if itemIdentifier == .addColumn {
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             
-            let control = NSSegmentedControl(labels: ["Format", "Compare"], trackingMode: .selectOne, target: self, action: #selector(onModeChanged(_:)))
-            control.segmentStyle = .texturedRounded
-            control.selectedSegment = 0 // 默认选中 Format
-            
-            item.view = control
-            item.label = "Mode"
-            item.paletteLabel = "Mode"
-            return item
-            
-        } else if itemIdentifier == .settings {
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            
-            let image = NSImage(systemSymbolName: "gear", accessibilityDescription: "Settings")
-            let button = NSButton(image: image!, target: self, action: #selector(onSettingsClicked))
+            let image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "添加对比列")
+            let button = NSButton(image: image!, target: self, action: #selector(onAddColumnClicked))
             button.bezelStyle = .texturedRounded
-            button.identifier = NSUserInterfaceItemIdentifier("SettingsButton")
+            button.toolTip = "添加对比列"
             
             item.view = button
-            item.label = "Settings"
-            item.paletteLabel = "Settings"
+            item.label = "添加列"
+            item.paletteLabel = "添加列"
             return item
         }
         

@@ -38,6 +38,17 @@ final class IndexedJSONNode {
         }
         return startOffset
     }
+
+    /// Key 内容在原始数据中的字节范围（不含引号），用于编辑 Key
+    var keyByteRange: (start: Int, end: Int)? {
+        guard keyStartOffset >= 0 else { return nil }
+        return (keyStartOffset, keyEndOffset)
+    }
+
+    /// Value 在原始数据中的字节范围，用于编辑 Value
+    var valueByteRange: (start: Int, end: Int) {
+        return (startOffset, endOffset)
+    }
     
     /// 在原始 JSON Data 中的起始字节偏移
     let startOffset: Int
@@ -189,7 +200,7 @@ final class IndexedJSONNode {
         return !isFullyLoaded
     }
     
-    /// 显示值
+    /// 显示值（完整）
     var displayValue: String {
         switch type {
         case .object:
@@ -197,6 +208,49 @@ final class IndexedJSONNode {
         case .array:
             return childCount == 0 ? "[]" : ""
         case .string, .number, .boolean, .null:
+            return rawString
+        }
+    }
+
+    /// 值的字节大小
+    var valueByteSize: Int {
+        return endOffset - startOffset
+    }
+
+    /// 格式化的大小文本（如 "1.2 KB"、"3.5 MB"）
+    var formattedSize: String {
+        let size = valueByteSize
+        if size < 1024 {
+            return "\(size) B"
+        } else if size < 1024 * 1024 {
+            return String(format: "%.1f KB", Double(size) / 1024.0)
+        } else {
+            return String(format: "%.1f MB", Double(size) / (1024.0 * 1024.0))
+        }
+    }
+
+    /// 值是否被截断显示
+    var isTruncated: Bool {
+        guard type == .string || type == .number else { return false }
+        return valueByteSize > Constants.valueTruncationThreshold
+    }
+
+    /// 截断后的显示值（树视图使用）
+    var truncatedDisplayValue: String {
+        switch type {
+        case .object:
+            return childCount == 0 ? "{}" : ""
+        case .array:
+            return childCount == 0 ? "[]" : ""
+        case .string, .number:
+            let raw = rawString
+            if raw.count <= Constants.valueTruncationThreshold {
+                return raw
+            }
+            let prefix = raw.prefix(Constants.truncationPrefixLength)
+            let suffix = raw.suffix(Constants.truncationSuffixLength)
+            return "\(prefix)...\(suffix) (\(formattedSize))"
+        case .boolean, .null:
             return rawString
         }
     }

@@ -14,6 +14,10 @@ test:
 run:
 	@swift run
 
+VERSION  = $(shell grep 'static let appVersion' OkJson/Utilities/Constants.swift | sed 's/.*"\(.*\)".*/\1/')
+ICON_SRC = OkJson/Resources/Assets.xcassets/AppIcon.appiconset
+ICONSET  = .build/AppIcon.iconset
+
 app:
 	@echo "🔨 Building OkJson..."
 	@swift build
@@ -22,9 +26,21 @@ app:
 	@mkdir -p OkJson.app/Contents/Resources
 	@cp .build/debug/OkJson OkJson.app/Contents/MacOS/
 	@echo "APPL????" > OkJson.app/Contents/PkgInfo
-	@if [ ! -f OkJson.app/Contents/Info.plist ]; then \
-		echo '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>OkJson</string><key>CFBundleIdentifier</key><string>com.okjson.app</string><key>CFBundleName</key><string>OkJson</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>1.0.0</string><key>LSMinimumSystemVersion</key><string>13.0</string><key>NSHighResolutionCapable</key><true/></dict></plist>' > OkJson.app/Contents/Info.plist; \
-	fi
+	@echo "📎 Generating Info.plist (v$(VERSION))..."
+	@sed 's/__VERSION__/$(VERSION)/g' scripts/Info.plist.template > OkJson.app/Contents/Info.plist
+	@echo "🎨 Building app icon..."
+	@mkdir -p $(ICONSET)
+	@sips -s format png $(ICON_SRC)/16.png   --out $(ICONSET)/icon_16x16.png      >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/32.png   --out $(ICONSET)/icon_16x16@2x.png   >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/32.png   --out $(ICONSET)/icon_32x32.png      >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/64.png   --out $(ICONSET)/icon_32x32@2x.png   >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/128.png  --out $(ICONSET)/icon_128x128.png    >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/256.png  --out $(ICONSET)/icon_128x128@2x.png >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/256.png  --out $(ICONSET)/icon_256x256.png    >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/512.png  --out $(ICONSET)/icon_256x256@2x.png >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/512.png  --out $(ICONSET)/icon_512x512.png    >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/1024.png --out $(ICONSET)/icon_512x512@2x.png >/dev/null 2>&1
+	@iconutil -c icns $(ICONSET) -o OkJson.app/Contents/Resources/AppIcon.icns
 	@pkill OkJson 2>/dev/null || true
 	@sleep 0.3
 	@echo "🚀 Launching OkJson..."
@@ -40,11 +56,27 @@ package: build-release
 	@mkdir -p OkJson.app/Contents/Resources
 	@cp .build/release/OkJson OkJson.app/Contents/MacOS/
 	@echo "APPL????" > OkJson.app/Contents/PkgInfo
-	@cp OkJson/Resources/Info.plist OkJson.app/Contents/ 2>/dev/null || \
-		(echo '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>OkJson</string><key>CFBundleIdentifier</key><string>com.okjson.app</string><key>CFBundleName</key><string>OkJson</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>1.0.0</string><key>CFBundleVersion</key><string>1</string><key>LSMinimumSystemVersion</key><string>13.0</string><key>NSHighResolutionCapable</key><true/><key>NSPrincipalClass</key><string>NSApplication</string></dict></plist>' > OkJson.app/Contents/Info.plist)
-	@hdiutil create -volname "OkJson" -srcfolder OkJson.app -ov -format UDZO -quiet OkJson-1.0.0.dmg
-	@echo "✅ Package created: OkJson-1.0.0.dmg"
-	@ls -lh OkJson-1.0.0.dmg
+	@sed 's/__VERSION__/$(VERSION)/g' scripts/Info.plist.template > OkJson.app/Contents/Info.plist
+	@mkdir -p $(ICONSET)
+	@sips -s format png $(ICON_SRC)/16.png   --out $(ICONSET)/icon_16x16.png      >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/32.png   --out $(ICONSET)/icon_16x16@2x.png   >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/32.png   --out $(ICONSET)/icon_32x32.png      >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/64.png   --out $(ICONSET)/icon_32x32@2x.png   >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/128.png  --out $(ICONSET)/icon_128x128.png    >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/256.png  --out $(ICONSET)/icon_128x128@2x.png >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/256.png  --out $(ICONSET)/icon_256x256.png    >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/512.png  --out $(ICONSET)/icon_256x256@2x.png >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/512.png  --out $(ICONSET)/icon_512x512.png    >/dev/null 2>&1
+	@sips -s format png $(ICON_SRC)/1024.png --out $(ICONSET)/icon_512x512@2x.png >/dev/null 2>&1
+	@iconutil -c icns $(ICONSET) -o OkJson.app/Contents/Resources/AppIcon.icns
+	@rm -rf .build/dmg_staging
+	@mkdir -p .build/dmg_staging
+	@cp -R OkJson.app .build/dmg_staging/
+	@ln -s /Applications .build/dmg_staging/Applications
+	@hdiutil create -volname "OkJson" -srcfolder .build/dmg_staging -ov -format UDZO -quiet OkJson-$(VERSION).dmg
+	@rm -rf .build/dmg_staging
+	@echo "✅ Package created: OkJson-$(VERSION).dmg"
+	@ls -lh OkJson-$(VERSION).dmg
 
 install: package
 	@cp -R OkJson.app /Applications/

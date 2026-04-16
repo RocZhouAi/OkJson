@@ -20,5 +20,40 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>json</string>
+            </array>
+            <key>CFBundleTypeIconFile</key>
+            <string></string>
+            <key>CFBundleTypeName</key>
+            <string>JSON Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Default</string>
+            <key>LSTypeIsPackage</key>
+            <false/>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>xcs</string>
+            </array>
+            <key>CFBundleTypeIconFile</key>
+            <string></string>
+            <key>CFBundleTypeName</key>
+            <string>XCS Document</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Default</string>
+            <key>LSTypeIsPackage</key>
+            <false/>
+        </dict>
+    </array>
 </dict>
 </plist>

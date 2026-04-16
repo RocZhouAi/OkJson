@@ -54,11 +54,61 @@ class FormatterViewModel {
     /// Indentation size (2 or 4 spaces)
     var indentation: Int = 2
     
+    // MARK: - File Association
+    
+    /// 通过文件关联打开时记录源文件路径
+    var sourceFilePath: String?
+    
+    /// 自打开文件后内容是否被用户修改过
+    var isModifiedSinceFileOpen: Bool = false
+    
+    /// 标记当前内容已被用户修改
+    func markAsModified() {
+        guard sourceFilePath != nil else { return }
+        isModifiedSinceFileOpen = true
+        NotificationCenter.default.post(name: .documentModified, object: self)
+    }
+    
+    /// 将当前内容保存回源文件
+    func saveToSourceFile() -> Bool {
+        guard let filePath = sourceFilePath else { return false }
+        
+        let content: String
+        if let tree = parsedTree {
+            content = tree.prettyJSONString(indentation: indentation)
+        } else {
+            content = inputText
+        }
+        
+        do {
+            try content.write(toFile: filePath, atomically: true, encoding: .utf8)
+            isModifiedSinceFileOpen = false
+            return true
+        } catch {
+            return false
+        }
+    }
+    
+    // MARK: - Column Metadata (Title & Color)
+    
+    var columnTitle: String = "Column" {
+        didSet {
+            onColumnMetadataChanged?()
+        }
+    }
+    
+    var columnColor: NSColor? = nil {
+        didSet {
+            onColumnMetadataChanged?()
+        }
+    }
+    
     // MARK: - Callbacks
     
     var onInputTextChanged: ((String) -> Void)?
     var onParsedTreeChanged: (() -> Void)?
     var onParseErrorChanged: (() -> Void)?
+    var onColumnMetadataChanged: (() -> Void)?
     
     // MARK: - Initialization
     
@@ -308,6 +358,7 @@ class FormatterViewModel {
     func pasteFromClipboard() {
         if let string = NSPasteboard.general.string(forType: .string) {
             inputText = string
+            markAsModified()
             formatJSON()
         }
     }
@@ -356,13 +407,109 @@ class FormatterViewModel {
     
     /// Clear all content
     func clear() {
+        markAsModified()
         inputText = ""
         formattedText = ""
         parsedTree = nil
         parseError = nil
+        clearSearch()
     }
     
-    // MARK: - Helper
+    // MARK: - Search
     
-
+    var searchQuery: String = ""
+    
+    private(set) var searchResults: [IndexedJSONNode] = []
+    private(set) var searchMatchNodeIDs: Set<ObjectIdentifier> = []
+    
+    /// 每个节点到其父节点的映射（用于展开祖先路径）
+    private(set) var nodeParentMap: [ObjectIdentifier: IndexedJSONNode] = [:]
+    
+    var currentSearchIndex: Int = -1 {
+        didSet {
+            onSearchStateChanged?()
+        }
+    }
+    
+    var onSearchStateChanged: (() -> Void)?
+    
+    var currentSearchMatch: IndexedJSONNode? {
+        guard currentSearchIndex >= 0, currentSearchIndex < searchResults.count else { return nil }
+        return searchResults[currentSearchIndex]
+    }
+    
+    func performSearch() {
+        guard !searchQuery.isEmpty, let tree = parsedTree else {
+            searchResults = []
+            searchMatchNodeIDs = []
+            nodeParentMap = [:]
+            currentSearchIndex = -1
+            onSearchStateChanged?()
+            return
+        }
+        
+        let query = searchQuery.lowercased()
+        var results: [IndexedJSONNode] = []
+        var parentMap: [ObjectIdentifier: IndexedJSONNode] = [:]
+        
+        searchRecursive(node: tree, query: query, results: &results, parentMap: &parentMap)
+        
+        searchResults = results
+        searchMatchNodeIDs = Set(results.map { ObjectIdentifier($0) })
+        nodeParentMap = parentMap
+        currentSearchIndex = results.isEmpty ? -1 : 0
+        onSearchStateChanged?()
+    }
+    
+    private func searchRecursive(
+        node: IndexedJSONNode,
+        query: String,
+        results: inout [IndexedJSONNode],
+        parentMap: inout [ObjectIdentifier: IndexedJSONNode]
+    ) {
+        var matched = false
+        
+        if let key = node.key, key.lowercased().contains(query) {
+            matched = true
+        }
+        
+        if !matched && !node.type.isContainer {
+            if node.displayValue.lowercased().contains(query) {
+                matched = true
+            }
+        }
+        
+        if matched {
+            results.append(node)
+        }
+        
+        if node.hasChildren {
+            node.loadMore(count: Int.max)
+            for i in 0..<node.childCount {
+                if let child = node.child(at: i) {
+                    parentMap[ObjectIdentifier(child)] = node
+                    searchRecursive(node: child, query: query, results: &results, parentMap: &parentMap)
+                }
+            }
+        }
+    }
+    
+    func nextSearchMatch() {
+        guard !searchResults.isEmpty else { return }
+        currentSearchIndex = (currentSearchIndex + 1) % searchResults.count
+    }
+    
+    func previousSearchMatch() {
+        guard !searchResults.isEmpty else { return }
+        currentSearchIndex = (currentSearchIndex - 1 + searchResults.count) % searchResults.count
+    }
+    
+    func clearSearch() {
+        searchQuery = ""
+        searchResults = []
+        searchMatchNodeIDs = []
+        nodeParentMap = [:]
+        currentSearchIndex = -1
+        onSearchStateChanged?()
+    }
 }
