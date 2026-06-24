@@ -35,92 +35,19 @@ final class JSONParser {
     }
 
     // MARK: - Error Parsing
-    
-    /// 从 JSON 字符串创建解析错误
+
+    /// 从 JSON 字符串创建解析错误（基于自研 JSONValidator，精确到行列 + 分类）
+    /// - Returns: 合法 JSON 返回 nil；否则返回首个错误的精确位置与分类
     func parseError(from jsonString: String) -> ParseError? {
-        let trimmed = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return ParseError(
-                message: Constants.ErrorMessages.emptyInput,
-                line: 1,
-                column: 1,
-                offset: 0
-            )
-        }
-        
-        guard let data = jsonString.data(using: .utf8) else {
-            return ParseError(
-                message: "无法将 JSON 转换为 UTF-8 数据",
-                line: 1,
-                column: 1,
-                offset: 0
-            )
-        }
-        
-        do {
-            _ = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-            return nil // 解析成功，没有错误
-        } catch let error as NSError {
-            return self.error(from: error, jsonString: jsonString)
-        }
-    }
-
-    // MARK: - Private Helpers
-
-    private func error(from error: Error, jsonString: String) -> ParseError {
-        guard let nsError = error as NSError? else {
-            return ParseError(
-                message: Constants.ErrorMessages.invalidJSON,
-                line: 1,
-                column: 1,
-                offset: 0
-            )
-        }
-
-        var line = 1
-        let column = 1
-        var offset = 0
-        var message = Constants.ErrorMessages.invalidJSON
-
-        if let debugDescription = nsError.userInfo[NSDebugDescriptionErrorKey] as? String {
-            message = debugDescription
-
-            if let range = debugDescription.range(of: #"line (\d+)"#, options: .regularExpression) {
-                let lineStr = debugDescription[range].replacingOccurrences(of: #"[^0-9]"#, with: "", options: .regularExpression)
-                if let lineNum = Int(lineStr) {
-                    line = lineNum
-                }
-            }
-        }
-
-        let lines = jsonString.components(separatedBy: "\n")
-        var currentOffset = 0
-        for i in 0..<min(line - 1, lines.count) {
-            currentOffset += lines[i].utf16.count + 1
-        }
-        offset = currentOffset
-
-        let contextStart = max(0, offset - 20)
-        let contextEnd = min(jsonString.utf16.count, offset + 20)
-        if contextStart < contextEnd && contextEnd <= jsonString.utf16.count {
-            let startIndex = jsonString.index(jsonString.startIndex, offsetBy: contextStart)
-            let endIndex = jsonString.index(jsonString.startIndex, offsetBy: contextEnd)
-            let context = String(jsonString[startIndex..<endIndex])
-            
-            return ParseError(
-                message: message,
-                line: line,
-                column: column,
-                offset: offset,
-                context: context
-            )
-        }
-
+        guard let synErr = JSONValidator.firstError(in: jsonString) else { return nil }
+        let converter = LineColumnConverter(text: jsonString)
+        let (line, column) = converter.lineColumn(at: synErr.utf16Offset)
         return ParseError(
-            message: message,
+            message: synErr.category.localizedMessage,
             line: line,
             column: column,
-            offset: offset
+            offset: synErr.utf16Offset,
+            category: synErr.category
         )
     }
 }
