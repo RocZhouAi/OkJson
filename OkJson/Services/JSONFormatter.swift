@@ -177,8 +177,20 @@ class SyntaxHighlightService {
 
 // MARK: - Legacy Compatibility
 
-/// JSON formatter service (Legacy stub)
+/// JSON formatter service
 final class JSONFormatter {
     static let shared = JSONFormatter()
     private init() {}
+
+    /// 美化 JSON 文本。非法 JSON（含空输入）返回 nil，不抛错。
+    /// - Parameters:
+    ///   - text: 原始 JSON 文本
+    ///   - indent: 缩进空格数（2 或 4）
+    ///   - sortKeys: 是否按 Key 字母序排序
+    static func format(_ text: String, indent: Int = 2, sortKeys: Bool = false) -> String? {
+        guard JSONValidator.firstError(in: text) == nil else { return nil }
+        guard let data = text.data(using: .utf8),
+              let node = IndexedJSONNode.fromData(data, shouldSortKeys: sortKeys) else { return nil }
+        return node.prettyJSONString(indentation: indent)
+    }
 }
