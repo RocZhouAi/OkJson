@@ -10,6 +10,8 @@ class FormatterViewController: NSSplitViewController {
     // MARK: - Properties
 
     var unifiedViewController: UnifiedJsonViewController!
+    /// 重构后的文本编辑器控制器（负责显示；树形 unifiedViewController 暂保留但不显示，计划③删）
+    var editorViewController: JSONEditorViewController!
     let viewModel = FormatterViewModel()
     
     /// Optional custom orientation (default is vertical)
@@ -109,7 +111,13 @@ class FormatterViewController: NSSplitViewController {
             }
         }
 
-        let item = NSSplitViewItem(viewController: unifiedViewController)
+        // 重构：创建文本编辑器并作为列显示内容（树形 unifiedViewController 暂保留但不显示）
+        editorViewController = JSONEditorViewController(viewModel: viewModel)
+        editorViewController.onFocusRequest = { [weak self] in
+            self?.onFocusChanged?(true)
+        }
+
+        let item = NSSplitViewItem(viewController: editorViewController)
         item.minimumThickness = 300
         item.holdingPriority = .defaultLow
         addSplitViewItem(item)
@@ -119,6 +127,11 @@ class FormatterViewController: NSSplitViewController {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.unifiedViewController.updateContent()
+
+                // 重构：把格式化结果推给文本编辑器显示
+                if !self.viewModel.formattedText.isEmpty {
+                    self.editorViewController.setText(self.viewModel.formattedText)
+                }
 
                 if self.isUnifiedMode {
                     if !self.viewModel.formattedText.isEmpty {
