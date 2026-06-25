@@ -116,6 +116,7 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         textView.textColor = .labelColor
         clearErrorHighlight()
         errorBar.hide()
+        applyHighlight()
         lineNumberView?.needsDisplay = true
     }
 
@@ -154,6 +155,8 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
                     self.errorBar.hide()
                     if let formatted = formatted, formatted != text {
                         self.setText(formatted)
+                    } else {
+                        self.applyHighlight()
                     }
                 }
             }
@@ -187,5 +190,22 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
             storage.removeAttribute(.backgroundColor, range: r)
         }
         currentErrorRange = nil
+    }
+
+    // MARK: - 语法高亮（全文着色，不访问 textView.layoutManager）
+
+    private func applyHighlight() {
+        guard let storage = textView.textStorage else { return }
+        let nsLen = (textView.string as NSString).length
+        guard nsLen > 0 else { return }
+        let dark = textView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let highlights = SyntaxHighlightService.shared.calculateHighlights(for: textView.string, isDark: dark)
+        storage.beginEditing()
+        storage.addAttribute(.foregroundColor, value: NSColor.labelColor,
+                             range: NSRange(location: 0, length: nsLen))
+        for (range, color) in highlights where NSMaxRange(range) <= nsLen {
+            storage.addAttribute(.foregroundColor, value: color, range: range)
+        }
+        storage.endEditing()
     }
 }
