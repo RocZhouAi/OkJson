@@ -115,16 +115,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         jsonMenu.addItem(NSMenuItem.separator())
         
-        let pasteItem = NSMenuItem(title: "Paste JSON", action: #selector(pasteJSON), keyEquivalent: "v")
-        pasteItem.keyEquivalentModifierMask = [.command, .shift]
-        jsonMenu.addItem(pasteItem)
-        
-        let copyResultItem = NSMenuItem(title: "Copy Formatted Result", action: #selector(copyFormattedResult), keyEquivalent: "c")
-        copyResultItem.keyEquivalentModifierMask = [.command, .shift]
-        jsonMenu.addItem(copyResultItem)
-        
-        jsonMenu.addItem(NSMenuItem.separator())
-        
         let sortKeysItem = NSMenuItem(title: "Sort Keys", action: #selector(sortKeys), keyEquivalent: "s")
         sortKeysItem.keyEquivalentModifierMask = [.command, .shift]
         jsonMenu.addItem(sortKeysItem)
@@ -186,18 +176,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.post(name: .formatJSON, object: nil)
     }
     
-    @objc func minifyJSON() {
-        NotificationCenter.default.post(name: .minifyJSON, object: nil)
-    }
-    
-    @objc func pasteJSON() {
-        NotificationCenter.default.post(name: .pasteJSON, object: nil)
-    }
-    
-    @objc func copyFormattedResult() {
-        NotificationCenter.default.post(name: .copyFormattedResult, object: nil)
-    }
-    
     @objc func sortKeys() {
         NotificationCenter.default.post(name: .sortKeys, object: nil)
     }
@@ -228,9 +206,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 extension Notification.Name {
     static let clearInput = Notification.Name("clearInput")
     static let formatJSON = Notification.Name("formatJSON")
-    static let minifyJSON = Notification.Name("minifyJSON")
-    static let pasteJSON = Notification.Name("pasteJSON")
-    static let copyFormattedResult = Notification.Name("copyFormattedResult")
     static let sortKeys = Notification.Name("sortKeys")
     static let autoFitColumnWidth = Notification.Name("autoFitColumnWidth")
     static let addColumn = Notification.Name("addColumn")

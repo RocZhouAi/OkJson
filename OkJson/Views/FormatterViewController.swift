@@ -41,17 +41,13 @@ class FormatterViewController: NSSplitViewController {
         }
     }
     
-    /// 是否显示列头（包含标题、颜色标记、关闭按钮）
-    var showHeader: Bool = false {
-        didSet {
-            unifiedViewController.isHeaderVisible = showHeader
-        }
-    }
-    
-    /// 是否显示关闭按钮
+    /// 是否显示列头（列头已由编辑器常驻显示，此标记保留以兼容 MainViewController）
+    var showHeader: Bool = false
+
+    /// 是否显示关闭按钮（多列显示，单列隐藏）
     var showCloseButton: Bool = true {
         didSet {
-            unifiedViewController.isCloseButtonVisible = showCloseButton
+            editorViewController?.setCloseButtonVisible(showCloseButton)
         }
     }
 
@@ -116,44 +112,21 @@ class FormatterViewController: NSSplitViewController {
         editorViewController.onFocusRequest = { [weak self] in
             self?.onFocusChanged?(true)
         }
+        editorViewController.onCloseRequest = { [weak self] in
+            self?.onCloseRequest?()
+        }
+        editorViewController.setCloseButtonVisible(showCloseButton)
 
         let item = NSSplitViewItem(viewController: editorViewController)
-        item.minimumThickness = 300
+        item.minimumThickness = 150
         item.holdingPriority = .defaultLow
         addSplitViewItem(item)
 
-        // 绑定 ViewModel 事件
+        // 编辑器自管显示与错误提示；格式化完成仅做回调（如有观察者）
         viewModel.onParsedTreeChanged = { [weak self] in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.unifiedViewController.updateContent()
-
-                // 重构：把格式化结果推给文本编辑器显示
-                if !self.viewModel.formattedText.isEmpty {
-                    self.editorViewController.setText(self.viewModel.formattedText)
-                }
-
-                if self.isUnifiedMode {
-                    if !self.viewModel.formattedText.isEmpty {
-                        self.viewModel.inputText = self.viewModel.formattedText
-                    }
-
-                    if self.preferTreeInUnifiedMode && self.viewModel.parsedTree != nil {
-                        self.unifiedViewController.switchMode(to: .viewing)
-                    }
-                }
-
-                self.onFormatted?()
-            }
+            DispatchQueue.main.async { self?.onFormatted?() }
         }
-        
-        viewModel.onParseErrorChanged = { [weak self] in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.unifiedViewController.updateContent()
-            }
-        }
-        
+
         // 监听通知
         setupNotifications()
     }
@@ -164,20 +137,8 @@ class FormatterViewController: NSSplitViewController {
             name: .formatJSON, object: nil
         )
         NotificationCenter.default.addObserver(
-            self, selector: #selector(handleMinifyJSON),
-            name: .minifyJSON, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handlePasteJSON),
-            name: .pasteJSON, object: nil
-        )
-        NotificationCenter.default.addObserver(
             self, selector: #selector(handleClearInput),
             name: .clearInput, object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleCopyFormattedResult),
-            name: .copyFormattedResult, object: nil
         )
         NotificationCenter.default.addObserver(
             self, selector: #selector(handleSortKeys),
@@ -205,51 +166,21 @@ class FormatterViewController: NSSplitViewController {
     
     @objc private func handleFormatJSON() {
         guard isFocused else { return }
-        
-        if !unifiedViewController.isDirty && viewModel.parsedTree != nil {
-            return
-        }
-        
-        unifiedViewController.isDirty = false
-        viewModel.formatJSON()
-        
-        if isUnifiedMode {
-            if viewModel.parsedTree != nil && !viewModel.formattedText.isEmpty {
-                viewModel.inputText = viewModel.formattedText
-            }
-        }
+        editorViewController.formatCurrent()
     }
-    
-    @objc private func handleMinifyJSON() {
-        guard isFocused else { return }
-        viewModel.minifyJSON()
-    }
-    
-    @objc private func handlePasteJSON() {
-        guard isFocused else { return }
-        viewModel.pasteFromClipboard()
-        if isUnifiedMode {
-            if viewModel.parsedTree != nil && !viewModel.formattedText.isEmpty {
-                viewModel.inputText = viewModel.formattedText
-            }
-        }
-    }
-    
+
     @objc private func handleClearInput() {
         guard isFocused else { return }
+        editorViewController.clearContent()
         viewModel.clear()
-        unifiedViewController.switchMode(to: .editing)
     }
-    
-    @objc private func handleCopyFormattedResult() {
-        guard isFocused else { return }
-        viewModel.copyToClipboard()
-    }
-    
+
     @objc private func handleSortKeys() {
         guard isFocused else { return }
+        // 打开 Key 排序并按当前设置重排焦点列（与底栏排序开关共用 UserDefaults）
+        UserDefaults.standard.set(true, forKey: Constants.UserDefaultsKeys.sortKeys)
         viewModel.markAsModified()
-        viewModel.formatJSON(sortKeysOverride: true)
+        editorViewController.formatCurrent()
     }
     
     @objc private func handleFindInJSON() {

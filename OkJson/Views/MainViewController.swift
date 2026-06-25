@@ -27,7 +27,13 @@ class MainViewController: NSSplitViewController {
 
     /// 标记是否需要均分（用于窗口 resize）
     private var needsEqualization: Bool = false
-    
+
+    /// 加列后持续拉平的截止时间（在此窗口内的每次分栏尺寸变化都把列宽拉回等宽，
+    /// 以对抗拖拽完成等"迟到的布局"把列宽打乱；窗口外用户可自由拖动分隔线）
+    private var equalizeUntil: Date?
+    /// 重入保护：applyEqualWidths 的 setPosition 会同步再发 didResize 通知，避免无限递归
+    private var isEqualizing = false
+
     /// 所有列的 FormatterViewController
     var columns: [FormatterViewController] {
         return splitViewItems.compactMap { $0.viewController as? FormatterViewController }
@@ -55,15 +61,21 @@ class MainViewController: NSSplitViewController {
         // 设置 splitView delegate
         splitView.delegate = self
 
+        // 监听分栏尺寸变化（用于"加列后持续拉平"）
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(splitViewDidResize(_:)),
+            name: NSSplitView.didResizeSubviewsNotification, object: splitView
+        )
+
         // 设置焦点
         updateFocusState()
 
         // 监听窗口 resize 事件
         setupWindowResizeObserver()
 
-        // 在布局完成后均分列宽
+        // 初始单列无需均分；多列由 addColumn/viewDidLayout 处理
         DispatchQueue.main.async { [weak self] in
-            self?.equalizeColumnWidths()
+            self?.applyEqualWidths()
         }
     }
     
@@ -103,12 +115,10 @@ class MainViewController: NSSplitViewController {
             display: false
         )
 
-        // 均分列宽
-        DispatchQueue.main.async { [weak self] in
-            self?.equalizeColumnWidths()
-        }
+        // 开启"持续拉平"窗口：viewDidLayout 会在内容/拖拽完成等布局后持续把列宽拉回等宽
+        scheduleEqualize()
     }
-    
+
     /// 移除指定列
     func removeColumn(at index: Int) {
         guard columnCount > 1, index >= 0, index < splitViewItems.count else { return }
@@ -128,10 +138,8 @@ class MainViewController: NSSplitViewController {
         updateFocusState()
         onColumnCountChanged?(columnCount)
 
-        // 均分列宽
-        DispatchQueue.main.async { [weak self] in
-            self?.equalizeColumnWidths()
-        }
+        // 重新均分剩余列
+        scheduleEqualize()
 
         // 重新启动同步滚动
         if isSyncScrollEnabled && columnCount > 1 {
@@ -139,24 +147,48 @@ class MainViewController: NSSplitViewController {
         }
     }
 
-    /// 均分所有列的宽度
-    private func equalizeColumnWidths() {
+    /// 供外部（如打开文件加载内容后）触发列宽均分：开启"持续拉平"窗口
+    func equalizeColumns() {
+        scheduleEqualize()
+    }
+
+    /// 开启"加列后持续拉平"窗口：先立即均分，并在之后 1.5s 内的每次分栏尺寸变化继续拉回等宽
+    private func scheduleEqualize() {
+        equalizeUntil = Date().addingTimeInterval(1.5)
+        applyEqualWidths()
+    }
+
+    /// 把各列设为等宽（核心 setter，无副作用、无日志）
+    private func applyEqualWidths() {
         guard columnCount > 1 else { return }
-
-        guard let window = view.window else { return }
-        let contentRect = window.contentLayoutRect
-        let totalWidth = contentRect.width
+        let totalWidth = splitView.bounds.width
         guard totalWidth > 0 else { return }
-
-        let count = CGFloat(columnCount)
-        let dividerCount = CGFloat(columnCount - 1)
         let dividerWidth = splitView.dividerThickness
-        let columnWidth = (totalWidth - dividerWidth * dividerCount) / count
-
-        // 设置分隔线位置
-        for i in 0..<splitViewItems.count - 1 {
+        let columnWidth = (totalWidth - dividerWidth * CGFloat(columnCount - 1)) / CGFloat(columnCount)
+        for i in 0..<(columnCount - 1) {
             let position = columnWidth * CGFloat(i + 1) + dividerWidth * CGFloat(i)
             splitView.setPosition(position, ofDividerAt: i)
+        }
+    }
+
+    /// 分栏尺寸变化时（程序化/拖拽完成的迟到布局都会触发此通知）：在"持续拉平"窗口内把列宽拉回等宽
+    @objc private func splitViewDidResize(_ notification: Notification) {
+        guard !isEqualizing,
+              let until = equalizeUntil, Date() < until,
+              columnCount > 1, splitView.bounds.width > 0 else { return }
+        let panes = splitView.subviews.filter { !String(describing: type(of: $0)).contains("Divider") }
+        guard panes.count == columnCount else { return }
+        let dividerWidth = splitView.dividerThickness
+        let target = (splitView.bounds.width - dividerWidth * CGFloat(columnCount - 1)) / CGFloat(columnCount)
+        let maxDev = panes.map { abs($0.frame.width - target) }.max() ?? 0
+        // 已基本相等就不再处理，避免循环
+        guard maxDev > 2 else { return }
+        // 延到下一 runloop 再均分：等当前这次布局/setPosition 完全结束，均分才是"最后一句话"，不会被覆盖
+        isEqualizing = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.applyEqualWidths()
+            self.isEqualizing = false
         }
     }
 
@@ -282,7 +314,9 @@ class MainViewController: NSSplitViewController {
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "v" {
-            focusedColumn?.viewModel.pasteFromClipboard()
+            if let clip = NSPasteboard.general.string(forType: .string) {
+                focusedColumn?.editorViewController?.loadContent(clip)
+            }
             return
         }
         super.keyDown(with: event)
@@ -330,7 +364,7 @@ class MainViewController: NSSplitViewController {
         // Debounce：避免频繁计算
         resizeDebounceTimer?.invalidate()
         resizeDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
-            self?.equalizeColumnWidths()
+            self?.applyEqualWidths()
         }
     }
 
@@ -339,7 +373,7 @@ class MainViewController: NSSplitViewController {
     /// 自动调整焦点列的宽度以适应内容
     func autoFitFocusedColumn() {
         guard let focusedColumn = focusedColumn,
-              let contentWidth = focusedColumn.unifiedViewController?.estimatedContentWidth() else { return }
+              let contentWidth = focusedColumn.editorViewController?.estimatedContentWidth() else { return }
 
         let minWidth: CGFloat = 300
         let newWidth = max(contentWidth, minWidth)

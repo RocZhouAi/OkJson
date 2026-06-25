@@ -15,9 +15,13 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
     private var lineNumberView: EditorLineNumberView?
     private var gutterWidthConstraint: NSLayoutConstraint?
     private var errorBar: EditorErrorBar!
+    private var headerView: ColumnHeaderView!
 
     /// 点击获得焦点回调
     var onFocusRequest: (() -> Void)?
+
+    /// 关闭列回调（由 FormatterViewController 转发到 MainViewController.removeColumn）
+    var onCloseRequest: (() -> Void)?
 
     private var debounceTimer: Timer?
     /// 粘贴/打开后置 true：下一次处理会自动格式化（手敲不置）
@@ -66,6 +70,7 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         textView.onOpenFile = { [weak self] path in
             _ = (self?.view.window?.windowController as? MainWindowController)?.openFile(path)
         }
+        textView.onBecomeFirstResponder = { [weak self] in self?.onFocusRequest?() }
         self.textView = textView
         viewModel.editorTextProvider = { [weak textView] in textView?.string ?? "" }
 
@@ -82,18 +87,38 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         errorBar = EditorErrorBar()
         errorBar.translatesAutoresizingMaskIntoConstraints = false
 
+        // 列头：文件名(可编辑) + 关闭× + 颜色标记，复用 ColumnHeaderView
+        let header = ColumnHeaderView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.title = viewModel.columnTitle
+        header.onClose = { [weak self] in self?.onCloseRequest?() }
+        header.onTitleChanged = { [weak self] newTitle in self?.viewModel.columnTitle = newTitle }
+        header.onColorChanged = { [weak self] color in self?.viewModel.columnColor = color }
+        self.headerView = header
+        header.setCloseVisible(closeButtonVisible)
+        viewModel.onColumnMetadataChanged = { [weak self] in
+            guard let self = self else { return }
+            self.headerView.title = self.viewModel.columnTitle
+        }
+
+        container.addSubview(header)
         container.addSubview(gutter)
         container.addSubview(scrollView)
         container.addSubview(errorBar)
         let gutterWidth = gutter.widthAnchor.constraint(equalToConstant: 44)
         self.gutterWidthConstraint = gutterWidth
         NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            header.topAnchor.constraint(equalTo: container.topAnchor),
+            header.heightAnchor.constraint(equalToConstant: 28),
+
             gutter.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            gutter.topAnchor.constraint(equalTo: container.topAnchor),
+            gutter.topAnchor.constraint(equalTo: header.bottomAnchor),
             gutter.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             gutterWidth,
             scrollView.leadingAnchor.constraint(equalTo: gutter.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             errorBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -136,6 +161,33 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         setText(content)
         pendingAutoFormat = true
         processText()
+    }
+
+    /// 关闭按钮目标显隐状态（视图加载前先记住，加载后在 loadView 应用）
+    private var closeButtonVisible = false
+
+    /// 设置列头关闭按钮显隐（多列显示，单列隐藏）
+    func setCloseButtonVisible(_ visible: Bool) {
+        closeButtonVisible = visible
+        headerView?.setCloseVisible(visible)
+    }
+
+    /// 清空编辑器内容
+    func clearContent() {
+        setText("")
+    }
+
+    /// 重新格式化当前文本（菜单 Format ⌘R）：合法 JSON 才格式化、回填
+    func formatCurrent() {
+        pendingAutoFormat = true
+        processText()
+    }
+
+    /// 估算内容宽度（最长行）用于自适应列宽。文本视图非折行，其布局宽度即最长行宽。
+    func estimatedContentWidth() -> CGFloat {
+        let textWidth = textView.frame.width
+        let gutter = gutterWidthConstraint?.constant ?? 0
+        return textWidth + gutter + 40
     }
 
     /// 唤出/操作原生查找栏。每次都先把 textView 设为 first responder，

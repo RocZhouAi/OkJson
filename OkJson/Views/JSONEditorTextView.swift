@@ -11,6 +11,14 @@ final class JSONEditorTextView: NSTextView {
     var onPaste: (() -> Void)?
     /// 拖入 .json/.xcs 文件时回调（参数为文件路径）
     var onOpenFile: ((String) -> Void)?
+    /// 获得焦点（成为第一响应者）时回调，用于切换焦点列
+    var onBecomeFirstResponder: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onBecomeFirstResponder?() }
+        return ok
+    }
 
     override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
         super.init(frame: frameRect, textContainer: container)

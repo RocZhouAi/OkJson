@@ -138,6 +138,9 @@ class MainWindowController: NSWindowController {
         window?.isDocumentEdited = false
         refreshWindowTitle(edited: false)
 
+        // 内容加载后重开"持续拉平"窗口，覆盖之后的迟到布局
+        mainVC.equalizeColumns()
+
         return true
     }
     

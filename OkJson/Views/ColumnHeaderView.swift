@@ -134,6 +134,11 @@ class ColumnHeaderView: NSView {
         updateColorVisuals(color: color)
     }
     
+    /// 单独控制关闭按钮显隐（多列时显示，单列时隐藏）
+    func setCloseVisible(_ visible: Bool) {
+        closeButton.isHidden = !visible
+    }
+
     private func updateColorVisuals(color: NSColor?) {
         currentColor = color
         if let color = color {
