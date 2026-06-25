@@ -7,14 +7,6 @@
 import AppKit
 
 final class JSONEditorTextView: NSTextView {
-    /// 粘贴后回调（用于触发自动格式化）
-    var onPaste: (() -> Void)?
-
-    override func paste(_ sender: Any?) {
-        super.paste(sender)
-        onPaste?()
-    }
-
     override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
         super.init(frame: frameRect, textContainer: container)
         commonSetup()
