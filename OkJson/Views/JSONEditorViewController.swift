@@ -3,7 +3,8 @@
 //
 //  每列的 JSON 文本编辑器控制器（重构后取代树形 UnifiedJsonViewController 的显示职责）。
 //  布局：左侧独立行号视图 + 右侧滚动文本区（不使用 NSRulerView）。
-//  功能：粘贴/打开自动格式化、手敲实时校验、非法 JSON 错误行标红 + 底栏提示。
+//  功能：粘贴/打开自动格式化、手敲实时校验、非法 JSON 错误行标红 + 底栏提示、
+//        语法高亮、原生查找栏、底栏设置(缩进/排序/行号/主题)响应。
 
 import AppKit
 
@@ -12,6 +13,7 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
     private(set) var scrollView: NSScrollView!
     private(set) var textView: JSONEditorTextView!
     private var lineNumberView: EditorLineNumberView?
+    private var gutterWidthConstraint: NSLayoutConstraint?
     private var errorBar: EditorErrorBar!
 
     /// 点击获得焦点回调
@@ -79,11 +81,13 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         container.addSubview(gutter)
         container.addSubview(scrollView)
         container.addSubview(errorBar)
+        let gutterWidth = gutter.widthAnchor.constraint(equalToConstant: 44)
+        self.gutterWidthConstraint = gutterWidth
         NSLayoutConstraint.activate([
             gutter.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             gutter.topAnchor.constraint(equalTo: container.topAnchor),
             gutter.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            gutter.widthAnchor.constraint(equalToConstant: 44),
+            gutterWidth,
             scrollView.leadingAnchor.constraint(equalTo: gutter.trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: container.topAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -96,6 +100,8 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
 
         self.view = container
         gutter.startObserving()
+        applyDisplaySettings()
+        registerSettingObservers()
     }
 
     deinit {
@@ -148,12 +154,13 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         let text = textView.string
         let autoFormat = pendingAutoFormat
         pendingAutoFormat = false
-        let indent = viewModel.indentation
+        let indent = UserDefaults.standard.integer(forKey: Constants.UserDefaultsKeys.indentation) == 4 ? 4 : 2
+        let sortKeys = UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.sortKeys)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let err = JSONParser.shared.parseError(from: text)
-            // 合法 + 粘贴/打开态 → 自动美化（默认不排序，保留原始字段顺序）
+            // 合法 + 粘贴/打开态 → 自动美化（缩进/排序按底栏设置；排序默认关，保留原序）
             let formatted: String? = (err == nil && autoFormat)
-                ? JSONFormatter.format(text, indent: indent, sortKeys: false)
+                ? JSONFormatter.format(text, indent: indent, sortKeys: sortKeys)
                 : nil
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -216,5 +223,49 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
             storage.addAttribute(.foregroundColor, value: color, range: range)
         }
         storage.endEditing()
+    }
+
+    // MARK: - 底栏设置响应
+
+    private var lineNumbersEnabled: Bool {
+        if UserDefaults.standard.object(forKey: Constants.UserDefaultsKeys.lineNumbers) == nil { return true }
+        return UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.lineNumbers)
+    }
+
+    private func applyDisplaySettings() {
+        let show = lineNumbersEnabled
+        gutterWidthConstraint?.constant = show ? 44 : 0
+        lineNumberView?.isHidden = !show
+    }
+
+    private func registerSettingObservers() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onFormatSettingsChanged),
+            name: Constants.Notifications.formatSettingsChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onThemeChanged),
+            name: Constants.Notifications.themeChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onDisplaySettingsChanged),
+            name: Constants.Notifications.displaySettingsChanged, object: nil)
+    }
+
+    @objc private func onFormatSettingsChanged() {
+        let text = textView.string
+        guard !text.isEmpty else { return }
+        let ind = UserDefaults.standard.integer(forKey: Constants.UserDefaultsKeys.indentation) == 4 ? 4 : 2
+        let sort = UserDefaults.standard.bool(forKey: Constants.UserDefaultsKeys.sortKeys)
+        if let formatted = JSONFormatter.format(text, indent: ind, sortKeys: sort) {
+            setText(formatted)
+        }
+    }
+
+    @objc private func onThemeChanged() {
+        applyHighlight()
+        lineNumberView?.needsDisplay = true
+    }
+
+    @objc private func onDisplaySettingsChanged() {
+        applyDisplaySettings()
     }
 }
