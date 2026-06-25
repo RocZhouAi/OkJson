@@ -63,8 +63,12 @@ class FormatterViewModel {
     var editorTextProvider: (() -> String)?
     
     /// 自打开文件后内容是否被用户修改过
-    var isModifiedSinceFileOpen: Bool = false
-    
+    var isModifiedSinceFileOpen: Bool = false {
+        didSet {
+            if oldValue != isModifiedSinceFileOpen { onColumnMetadataChanged?() }
+        }
+    }
+
     /// 标记当前内容已被用户修改
     func markAsModified() {
         guard sourceFilePath != nil else { return }

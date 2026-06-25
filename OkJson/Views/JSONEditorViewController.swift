@@ -49,6 +49,9 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         scrollView.autohidesScrollers = true
         scrollView.borderType = .noBorder
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 防止超长不折行内容把列撑宽：内容宽度不参与外层分栏尺寸竞争
+        scrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        scrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let textStorage = NSTextStorage()
         let layoutManager = NSLayoutManager()
@@ -98,7 +101,8 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         header.setCloseVisible(closeButtonVisible)
         viewModel.onColumnMetadataChanged = { [weak self] in
             guard let self = self else { return }
-            self.headerView.title = self.viewModel.columnTitle
+            let dot = self.viewModel.isModifiedSinceFileOpen ? "● " : ""
+            self.headerView.title = dot + self.viewModel.columnTitle
         }
 
         container.addSubview(header)
@@ -127,6 +131,8 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
             errorBar.heightAnchor.constraint(equalToConstant: 26)
         ])
 
+        container.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        container.setContentHuggingPriority(.defaultLow, for: .horizontal)
         self.view = container
         gutter.startObserving()
         applyDisplaySettings()

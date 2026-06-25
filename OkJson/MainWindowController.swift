@@ -59,7 +59,8 @@ class MainWindowController: NSWindowController {
 
     /// 刷新窗口标题：未保存时在文件名前加一个明显的圆点
     private func refreshWindowTitle(edited: Bool) {
-        window?.title = (edited ? "● " : "") + documentTitle
+        // 窗口标题只显示文件名；已编辑状态由每列列头的圆点表示
+        window?.title = documentTitle
     }
     
     // MARK: - Manual Persistence
