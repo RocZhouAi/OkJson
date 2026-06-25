@@ -100,10 +100,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(withTitle: "Find…", action: #selector(findInJSON), keyEquivalent: "f")
-        let findNextItem = NSMenuItem(title: "Find Next", action: #selector(findNextInJSON), keyEquivalent: "g")
-        editMenu.addItem(findNextItem)
-        let findPrevItem = NSMenuItem(title: "Find Previous", action: #selector(findPreviousInJSON), keyEquivalent: "G")
-        editMenu.addItem(findPrevItem)
+        editMenu.addItem(NSMenuItem(title: "Find Next", action: #selector(findNextInJSON), keyEquivalent: "g"))
+        editMenu.addItem(NSMenuItem(title: "Find Previous", action: #selector(findPreviousInJSON), keyEquivalent: "G"))
         
         // JSON 菜单
         let jsonMenuItem = NSMenuItem()

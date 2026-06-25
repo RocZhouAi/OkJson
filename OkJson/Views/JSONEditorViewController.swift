@@ -120,6 +120,15 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         lineNumberView?.needsDisplay = true
     }
 
+    /// 唤出/操作原生查找栏。每次都先把 textView 设为 first responder，
+    /// 确保关闭查找栏后仍能反复用 ⌘F 唤出。action: 1=显示查找 2=下一个 3=上一个
+    func showFind(_ action: Int) {
+        view.window?.makeFirstResponder(textView)
+        let item = NSMenuItem()
+        item.tag = action
+        textView.performTextFinderAction(item)
+    }
+
     // MARK: - NSTextViewDelegate
 
     func textDidChange(_ notification: Notification) {

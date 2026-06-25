@@ -31,7 +31,7 @@ class FormatterViewController: NSSplitViewController {
     var preferTreeInUnifiedMode: Bool = false
     
     var mainScrollView: NSScrollView? {
-        return unifiedViewController?.scrollView
+        return editorViewController?.scrollView
     }
     
     /// Focus state for Compare mode (border highlight)
@@ -254,17 +254,17 @@ class FormatterViewController: NSSplitViewController {
     
     @objc private func handleFindInJSON() {
         guard isFocused else { return }
-        unifiedViewController.toggleSearchBar()
+        editorViewController.showFind(1)  // showFindInterface
     }
-    
+
     @objc private func handleFindNextInJSON() {
         guard isFocused else { return }
-        unifiedViewController.navigateToNextMatch()
+        editorViewController.showFind(2)  // nextMatch
     }
-    
+
     @objc private func handleFindPreviousInJSON() {
         guard isFocused else { return }
-        unifiedViewController.navigateToPreviousMatch()
+        editorViewController.showFind(3)  // previousMatch
     }
     
     // MARK: - View Switching
