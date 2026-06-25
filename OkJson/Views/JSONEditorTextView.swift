@@ -9,11 +9,8 @@ import AppKit
 final class JSONEditorTextView: NSTextView {
     /// 粘贴后回调（触发自动格式化）
     var onPaste: (() -> Void)?
-
-    override func paste(_ sender: Any?) {
-        super.paste(sender)
-        onPaste?()
-    }
+    /// 拖入 .json/.xcs 文件时回调（参数为文件路径）
+    var onOpenFile: ((String) -> Void)?
 
     override init(frame frameRect: NSRect, textContainer container: NSTextContainer?) {
         super.init(frame: frameRect, textContainer: container)
@@ -35,7 +32,42 @@ final class JSONEditorTextView: NSTextView {
         isRichText = false
         allowsUndo = true
         textContainerInset = NSSize(width: 4, height: 6)
-        usesFindBar = true                 // 原生查找栏
+        usesFindBar = true
         isIncrementalSearchingEnabled = true
+        registerForDraggedTypes([.fileURL])
+    }
+
+    override func paste(_ sender: Any?) {
+        super.paste(sender)
+        onPaste?()
+    }
+
+    // MARK: - 文件拖拽打开（.json / .xcs）
+
+    private func droppedJSONPath(_ sender: NSDraggingInfo) -> String? {
+        let opts: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: opts) as? [URL],
+              let url = urls.first else { return nil }
+        let ext = url.pathExtension.lowercased()
+        guard ext == "json" || ext == "xcs" else { return nil }
+        return url.path
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if droppedJSONPath(sender) != nil { return .copy }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if droppedJSONPath(sender) != nil { return .copy }
+        return super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let path = droppedJSONPath(sender) {
+            onOpenFile?(path)
+            return true
+        }
+        return super.performDragOperation(sender)
     }
 }

@@ -58,6 +58,9 @@ class FormatterViewModel {
     
     /// 通过文件关联打开时记录源文件路径
     var sourceFilePath: String?
+
+    /// 提供编辑器当前文本（保存时用编辑器实际内容，而非可能过时的 parsedTree/inputText）
+    var editorTextProvider: (() -> String)?
     
     /// 自打开文件后内容是否被用户修改过
     var isModifiedSinceFileOpen: Bool = false
@@ -74,7 +77,9 @@ class FormatterViewModel {
         guard let filePath = sourceFilePath else { return false }
         
         let content: String
-        if let tree = parsedTree {
+        if let provider = editorTextProvider {
+            content = provider()
+        } else if let tree = parsedTree {
             content = tree.prettyJSONString(indentation: indentation)
         } else {
             content = inputText

@@ -63,7 +63,11 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         textView.autoresizingMask = [.width, .height]
         textView.delegate = self
         textView.onPaste = { [weak self] in self?.pendingAutoFormat = true }
+        textView.onOpenFile = { [weak self] path in
+            _ = (self?.view.window?.windowController as? MainWindowController)?.openFile(path)
+        }
         self.textView = textView
+        viewModel.editorTextProvider = { [weak textView] in textView?.string ?? "" }
 
         scrollView.documentView = textView
         scrollView.hasVerticalRuler = false
@@ -126,6 +130,14 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         lineNumberView?.needsDisplay = true
     }
 
+    /// 打开文件用：先同步显示原文（瞬间可见，杜绝"先空白再渲染"），
+    /// 再后台格式化合法 JSON 后回填；非法则保留原文并标红、弹错误条。
+    func loadContent(_ content: String) {
+        setText(content)
+        pendingAutoFormat = true
+        processText()
+    }
+
     /// 唤出/操作原生查找栏。每次都先把 textView 设为 first responder，
     /// 确保关闭查找栏后仍能反复用 ⌘F 唤出。action: 1=显示查找 2=下一个 3=上一个
     func showFind(_ action: Int) {
@@ -140,6 +152,7 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard !isApplyingProgrammaticText else { return }
         lineNumberView?.needsDisplay = true
+        viewModel.markAsModified()
         scheduleProcess()
     }
 

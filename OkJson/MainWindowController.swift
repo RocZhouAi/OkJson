@@ -8,7 +8,10 @@ import AppKit
 class MainWindowController: NSWindowController {
     
     private var appContainerViewController: AppContainerViewController!
-    
+
+    /// 当前文档标题（不含未保存圆点），用于刷新窗口标题
+    private var documentTitle: String = "OkJson"
+
     convenience init() {
         // 创建窗口
         let window = NSWindow(
@@ -18,7 +21,7 @@ class MainWindowController: NSWindowController {
             defer: false
         )
         window.title = "OkJson"
-        window.titlebarAppearsTransparent = true
+        window.titlebarAppearsTransparent = false
         window.toolbarStyle = .unified
         window.minSize = NSSize(width: 800, height: 600)
         
@@ -51,6 +54,12 @@ class MainWindowController: NSWindowController {
     
     @objc private func handleDocumentModified() {
         window?.isDocumentEdited = true
+        refreshWindowTitle(edited: true)
+    }
+
+    /// 刷新窗口标题：未保存时在文件名前加一个明显的圆点
+    private func refreshWindowTitle(edited: Bool) {
+        window?.title = (edited ? "● " : "") + documentTitle
     }
     
     // MARK: - Manual Persistence
@@ -86,7 +95,7 @@ class MainWindowController: NSWindowController {
         
         window?.toolbar = toolbar
         window?.toolbarStyle = .unified
-        window?.titleVisibility = .hidden
+        window?.titleVisibility = .visible
     }
     
     @objc private func onAddColumnClicked() {
@@ -105,25 +114,29 @@ class MainWindowController: NSWindowController {
         let fileName = fileURL.lastPathComponent
         let mainVC = appContainerViewController.mainViewController
 
-        // 当前焦点栏为空则复用，否则新增一栏
+        // 焦点列编辑器为空则复用，否则新建空列（用编辑器实际文本判断，避免与 viewModel 脱节）
+        let target: FormatterViewController
         if let focused = mainVC.focusedColumn,
-           focused.viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            focused.viewModel.inputText = content
-            focused.viewModel.formatJSON()
-            focused.viewModel.columnTitle = fileName
-            focused.viewModel.sourceFilePath = path
-            focused.viewModel.isModifiedSinceFileOpen = false
+           (focused.editorViewController?.textView.string ?? "")
+               .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            target = focused
         } else {
-            mainVC.addColumn(content: content, title: fileName)
-            if let lastColumn = mainVC.columns.last {
-                lastColumn.viewModel.sourceFilePath = path
-                lastColumn.viewModel.isModifiedSinceFileOpen = false
-            }
+            mainVC.addColumn()
+            guard let last = mainVC.columns.last else { return false }
+            target = last
         }
 
+        // 访问 view 强制触发 viewDidLoad（创建 editorViewController），再同步显示内容（杜绝"先空白再渲染"）
+        _ = target.view
+        target.editorViewController?.loadContent(content)
+        target.viewModel.columnTitle = fileName
+        target.viewModel.sourceFilePath = path
+        target.viewModel.isModifiedSinceFileOpen = false
+
         window?.representedURL = fileURL
-        window?.title = fileName
+        documentTitle = fileName
         window?.isDocumentEdited = false
+        refreshWindowTitle(edited: false)
 
         return true
     }
@@ -202,6 +215,7 @@ class MainWindowController: NSWindowController {
             $0.viewModel.sourceFilePath != nil && $0.viewModel.isModifiedSinceFileOpen
         }
         window?.isDocumentEdited = hasUnsaved
+        refreshWindowTitle(edited: hasUnsaved)
     }
 }
 
