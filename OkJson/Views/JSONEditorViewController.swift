@@ -28,8 +28,8 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
     private var pendingAutoFormat = false
     /// 程序化设置文本时为 true：不触发自动处理
     private var isApplyingProgrammaticText = false
-    /// 当前错误行高亮范围
-    private var currentErrorRange: NSRange?
+    /// 当前是否有错误行高亮：避免无错误的常见路径上也做全文档属性清除
+    private var hasErrorHighlight = false
 
     init(viewModel: FormatterViewModel) {
         self.viewModel = viewModel
@@ -257,10 +257,10 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         let ns = text as NSString
         let offset = min(max(0, error.offset), ns.length)
         let lineRange = ns.lineRange(for: NSRange(location: offset, length: 0))
-        currentErrorRange = lineRange
         textView.textStorage?.addAttribute(
             .backgroundColor, value: NSColor.systemRed.withAlphaComponent(0.15), range: lineRange
         )
+        hasErrorHighlight = true
         errorBar.show(message: "第 \(error.line) 行：\(error.message)") { [weak self] in
             guard let self = self else { return }
             let target = NSRange(location: offset, length: 0)
@@ -271,12 +271,14 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     private func clearErrorHighlight() {
-        if let r = currentErrorRange,
-           let storage = textView.textStorage,
-           NSMaxRange(r) <= storage.length {
-            storage.removeAttribute(.backgroundColor, range: r)
-        }
-        currentErrorRange = nil
+        // 仅在确有错误高亮时才清除，避免无错误的常见路径上对大文档做全文档属性清除
+        guard hasErrorHighlight else { return }
+        hasErrorHighlight = false
+        // 错误行红色背景是编辑器文本中 backgroundColor 的唯一用途；全量清除，
+        // 避免用编辑后已失真的 range 快照导致红底残留清不掉
+        guard let storage = textView.textStorage, storage.length > 0 else { return }
+        storage.removeAttribute(.backgroundColor,
+                                range: NSRange(location: 0, length: storage.length))
     }
 
     // MARK: - 语法高亮（全文着色，不访问 textView.layoutManager）

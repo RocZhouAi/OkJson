@@ -77,14 +77,10 @@ class AppContainerViewController: NSViewController {
         return button
     }()
     
-    // 中间：功能按钮区域（多列模式专用）
-    private lazy var syncScrollButton: NSButton = {
-        let button = NSButton(title: "同步滚动", target: self, action: #selector(onSyncScrollClicked))
-        button.bezelStyle = .recessed
-        button.setButtonType(.pushOnPushOff) // Toggle behavior
-        button.image = NSImage(systemSymbolName: "lock", accessibilityDescription: "同步滚动")
-        button.imagePosition = .imageLeft
-        button.translatesAutoresizingMaskIntoConstraints = false
+    // 中央悬浮按钮（FAB，多列模式专用）：核心功能「同步滚动」
+    private lazy var syncScrollButton: SyncScrollFloatingButton = {
+        let button = SyncScrollFloatingButton()
+        button.onClick = { [weak self] in self?.onSyncScrollClicked() }
         return button
     }()
     
@@ -101,7 +97,6 @@ class AppContainerViewController: NSViewController {
     }()
     
     private var footerHeightConstraint: NSLayoutConstraint!
-    private var centerStackView: NSStackView!
     private var leftStackView: NSStackView!
     
     // MARK: - Initialization
@@ -192,28 +187,24 @@ class AppContainerViewController: NSViewController {
         leftStackView.translatesAutoresizingMaskIntoConstraints = false
         footerView.addSubview(leftStackView)
         
-        // 中间：功能按钮 Stack
-        centerStackView = NSStackView(views: [syncScrollButton])
-        centerStackView.orientation = .horizontal
-        centerStackView.spacing = 8
-        centerStackView.translatesAutoresizingMaskIntoConstraints = false
-        footerView.addSubview(centerStackView)
-        
         // 右侧：快捷键提示
         footerView.addSubview(shortcutsLabel)
+
+        // 中央悬浮按钮（FAB）：加到根 view，凸出于底栏上沿、浮在最上层
+        view.addSubview(syncScrollButton)
 
         NSLayoutConstraint.activate([
             // 左侧
             leftStackView.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 8),
             leftStackView.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
 
-            // 中间
-            centerStackView.centerXAnchor.constraint(equalTo: footerView.centerXAnchor),
-            centerStackView.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
-
             // 右侧
             shortcutsLabel.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -12),
             shortcutsLabel.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
+
+            // 中央 FAB：水平居中，垂直骑在底栏上沿（凸出约一半）
+            syncScrollButton.centerXAnchor.constraint(equalTo: footerView.centerXAnchor),
+            syncScrollButton.centerYAnchor.constraint(equalTo: footerView.topAnchor),
         ])
     }
     
@@ -241,7 +232,7 @@ class AppContainerViewController: NSViewController {
     
     private func updateFooterVisibility() {
         let isMultiColumn = mainViewController.columnCount > 1
-        centerStackView?.isHidden = !isMultiColumn
+        syncScrollButton.isHidden = !isMultiColumn
     }
     
     // MARK: - Actions
@@ -271,7 +262,8 @@ class AppContainerViewController: NSViewController {
     }
     
     @objc private func onSyncScrollClicked() {
-        mainViewController.toggleSyncScroll(enabled: syncScrollButton.state == .on)
+        syncScrollButton.isSyncOn.toggle()
+        mainViewController.toggleSyncScroll(enabled: syncScrollButton.isSyncOn)
     }
     
 

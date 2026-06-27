@@ -9,7 +9,8 @@ import UniformTypeIdentifiers
 class AppDelegate: NSObject, NSApplicationDelegate {
 
     var mainWindowController: MainWindowController?
-    private var fileToOpen: String?
+    /// 启动前收到的待打开文件（窗口就绪后统一打开）
+    private var pendingFiles: [String] = []
 
     // MARK: - Application Lifecycle
 
@@ -21,11 +22,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 设置菜单
         setupMenuBar()
 
-        // 如果有待打开的文件，现在打开它
-        if let file = fileToOpen {
-            _ = mainWindowController?.openFile(file)
-            fileToOpen = nil
-        }
+        // 启动前若已收到待打开文件，现在统一打开
+        for f in pendingFiles { _ = mainWindowController?.openFile(f) }
+        pendingFiles.removeAll()
 
         // 启动后静默检查更新
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -46,12 +45,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Open File
 
-    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
-        if let windowController = mainWindowController {
-            return windowController.openFile(filename)
+    /// 现代多文件打开（macOS 推荐路径：双击文件、拖到 Dock 图标）
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let paths = urls.map { $0.path }
+        if let wc = mainWindowController {
+            for p in paths { _ = wc.openFile(p) }
         } else {
-            // 窗口还未创建，暂存文件路径
-            fileToOpen = filename
+            pendingFiles.append(contentsOf: paths)
+        }
+    }
+
+    /// 旧版单文件打开（兜底）
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        if let wc = mainWindowController {
+            return wc.openFile(filename)
+        } else {
+            pendingFiles.append(filename)
             return true
         }
     }
@@ -85,6 +94,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(withTitle: "Save", action: #selector(saveFile), keyEquivalent: "s")
         fileMenu.addItem(NSMenuItem.separator())
         fileMenu.addItem(withTitle: "Clear Input", action: #selector(clearInput), keyEquivalent: "k")
+        fileMenu.addItem(NSMenuItem.separator())
+        fileMenu.addItem(withTitle: "设为 .json 默认打开方式", action: #selector(setAsDefaultJSONApp), keyEquivalent: "")
         
         // Edit 菜单
         let editMenuItem = NSMenuItem()
@@ -162,6 +173,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func saveFile() {
         mainWindowController?.saveFocusedColumn()
+    }
+
+    /// 把 OkJson 设为 .json 的默认打开应用（macOS 不允许自动抢默认，由用户主动触发）
+    @objc func setAsDefaultJSONApp() {
+        guard let jsonType = UTType(filenameExtension: "json") else { return }
+        let bundleURL = Bundle.main.bundleURL
+        NSWorkspace.shared.setDefaultApplication(at: bundleURL, toOpen: jsonType) { error in
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                if let error = error {
+                    alert.messageText = "设置失败"
+                    alert.informativeText = "无法设为默认：\(error.localizedDescription)\n建议先把 OkJson 拖到「应用程序」文件夹，再试一次。"
+                    alert.alertStyle = .warning
+                } else {
+                    alert.messageText = "已设为默认"
+                    alert.informativeText = "现在双击 .json 文件会用 OkJson 打开。"
+                }
+                alert.runModal()
+            }
+        }
     }
 
     @objc func checkForUpdates() {

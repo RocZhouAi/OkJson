@@ -29,6 +29,10 @@
 			<array>
 				<string>json</string>
 			</array>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.json</string>
+			</array>
 			<key>CFBundleTypeName</key>
 			<string>JSON Document</string>
 			<key>CFBundleTypeRole</key>

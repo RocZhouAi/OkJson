@@ -22,7 +22,7 @@ class MainWindowController: NSWindowController {
         )
         window.title = "OkJson"
         window.titlebarAppearsTransparent = false
-        window.toolbarStyle = .unified
+        window.toolbarStyle = .unifiedCompact
         window.minSize = NSSize(width: 800, height: 600)
         
         // 设置内容视图控制器
@@ -95,8 +95,9 @@ class MainWindowController: NSWindowController {
         toolbar.displayMode = .iconOnly
         
         window?.toolbar = toolbar
-        window?.toolbarStyle = .unified
-        window?.titleVisibility = .visible
+        window?.toolbarStyle = .unifiedCompact
+        // 标题栏不再显示文件名（每列列头已显示），仅保留 window.title 供 Window 菜单/Dock 识别
+        window?.titleVisibility = .hidden
     }
     
     @objc private func onAddColumnClicked() {

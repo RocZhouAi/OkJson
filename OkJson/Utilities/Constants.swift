@@ -11,7 +11,7 @@ enum Constants {
     // MARK: - App Info
 
     static let appName = "OkJson"
-    static let appVersion = "1.1.0"
+    static let appVersion = "1.2.0"
 
     // MARK: - File Size Limits
 

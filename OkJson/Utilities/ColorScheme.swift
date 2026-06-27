@@ -10,17 +10,17 @@ import AppKit
 enum SyntaxColor {
     // MARK: - Default Scheme Colors
 
-    static let defaultKey = NSColor(red: 0.2, green: 0.5, blue: 1.0, alpha: 1.0) // Bright blue
-    static let defaultString = NSColor(red: 0.42, green: 0.53, blue: 0.35, alpha: 1.0) // #6A8759
-    static let defaultNumber = NSColor(red: 0.41, green: 0.59, blue: 0.73, alpha: 1.0) // #6897BB
+    static let defaultKey = NSColor(red: 0.729, green: 0.522, blue: 0.984, alpha: 1.0) // #BA85FB 紫
+    static let defaultString = NSColor(red: 0.0, green: 0.882, blue: 0.671, alpha: 1.0) // #00E1AB 绿
+    static let defaultNumber = NSColor(red: 0.0, green: 0.882, blue: 0.671, alpha: 1.0) // #00E1AB 绿（数字归为 value）
     static let defaultBoolean = NSColor(red: 0.8, green: 0.47, blue: 0.2, alpha: 1.0) // #CC7832
     static let defaultNull = NSColor(red: 0.8, green: 0.47, blue: 0.2, alpha: 1.0) // #CC7832
 
     // MARK: - Dark Scheme Colors
 
-    static let darkKey = NSColor(red: 0.4, green: 0.6, blue: 0.8, alpha: 1.0)
-    static let darkString = NSColor(red: 0.5, green: 0.8, blue: 0.5, alpha: 1.0)
-    static let darkNumber = NSColor(red: 0.5, green: 0.7, blue: 0.9, alpha: 1.0)
+    static let darkKey = NSColor(red: 0.729, green: 0.522, blue: 0.984, alpha: 1.0)  // #BA85FB 紫
+    static let darkString = NSColor(red: 0.0, green: 0.882, blue: 0.671, alpha: 1.0) // #00E1AB 绿
+    static let darkNumber = NSColor(red: 0.0, green: 0.882, blue: 0.671, alpha: 1.0) // #00E1AB 绿（数字归为 value）
     static let darkBoolean = NSColor(red: 0.9, green: 0.6, blue: 0.3, alpha: 1.0)
     static let darkNull = NSColor(red: 0.9, green: 0.6, blue: 0.3, alpha: 1.0)
 
