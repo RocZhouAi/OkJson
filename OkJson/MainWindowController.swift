@@ -176,10 +176,12 @@ class MainWindowController: NSWindowController {
         switch response {
         case .alertFirstButtonReturn:
             for column in unsavedColumns {
-                if !column.viewModel.saveToSourceFile() {
+                do {
+                    try column.viewModel.saveToSourceFile()
+                } catch {
                     let errAlert = NSAlert()
                     errAlert.messageText = "保存失败"
-                    errAlert.informativeText = "无法写入文件：\(column.viewModel.sourceFilePath ?? "")"
+                    errAlert.informativeText = error.localizedDescription
                     errAlert.alertStyle = .critical
                     errAlert.runModal()
                     return false
@@ -203,12 +205,20 @@ class MainWindowController: NSWindowController {
         guard let focused = mainVC.focusedColumn,
               focused.viewModel.sourceFilePath != nil else { return }
         
-        if focused.viewModel.saveToSourceFile() {
+        do {
+            try focused.viewModel.saveToSourceFile()
             updateDocumentEditedState()
-        } else {
+            // 可能已重命名文件，刷新窗口标题与代理图标
+            if let path = focused.viewModel.sourceFilePath {
+                let fileURL = URL(fileURLWithPath: path)
+                window?.representedURL = fileURL
+                documentTitle = fileURL.lastPathComponent
+                refreshWindowTitle(edited: window?.isDocumentEdited ?? false)
+            }
+        } catch {
             let alert = NSAlert()
             alert.messageText = "保存失败"
-            alert.informativeText = "无法写入文件：\(focused.viewModel.sourceFilePath ?? "")"
+            alert.informativeText = error.localizedDescription
             alert.alertStyle = .critical
             alert.runModal()
         }

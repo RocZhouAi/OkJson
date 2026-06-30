@@ -76,10 +76,29 @@ class FormatterViewModel {
         NotificationCenter.default.post(name: .documentModified, object: self)
     }
     
-    /// 将当前内容保存回源文件
-    func saveToSourceFile() -> Bool {
-        guard let filePath = sourceFilePath else { return false }
-        
+    /// 保存失败原因（用于向用户展示具体提示）
+    enum SaveError: LocalizedError {
+        case noSourceFile
+        case invalidFileName
+        case targetExists(String)
+        case writeFailed(String)
+        case renameFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .noSourceFile: return "该列未关联文件"
+            case .invalidFileName: return "文件名无效（不能为空或包含「/」）"
+            case .targetExists(let name): return "目标位置已存在同名文件「\(name)」"
+            case .writeFailed(let path): return "无法写入文件：\(path)"
+            case .renameFailed(let detail): return "重命名失败：\(detail)"
+            }
+        }
+    }
+
+    /// 将当前内容保存回源文件；若列头标题(文件名)已改动，同目录重命名磁盘文件
+    func saveToSourceFile() throws {
+        guard let filePath = sourceFilePath else { throw SaveError.noSourceFile }
+
         let content: String
         if let provider = editorTextProvider {
             content = provider()
@@ -88,14 +107,45 @@ class FormatterViewModel {
         } else {
             content = inputText
         }
-        
+
+        let currentURL = URL(fileURLWithPath: filePath)
+        let currentName = currentURL.lastPathComponent
+
+        // 目标文件名取列头标题；漏写扩展名则补回原扩展名
+        var targetName = columnTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !targetName.isEmpty, !targetName.contains("/") else {
+            throw SaveError.invalidFileName
+        }
+        let originalExt = currentURL.pathExtension
+        if !originalExt.isEmpty && (targetName as NSString).pathExtension.isEmpty {
+            targetName += "." + originalExt
+        }
+
+        let needsRename = targetName != currentName
+        let targetURL = currentURL.deletingLastPathComponent().appendingPathComponent(targetName)
+        if needsRename && FileManager.default.fileExists(atPath: targetURL.path) {
+            throw SaveError.targetExists(targetName)
+        }
+
+        // 先写内容到当前路径
         do {
             try content.write(toFile: filePath, atomically: true, encoding: .utf8)
-            isModifiedSinceFileOpen = false
-            return true
         } catch {
-            return false
+            throw SaveError.writeFailed(filePath)
         }
+
+        // 标题变了则重命名磁盘文件，并回填规范化后的路径与标题
+        if needsRename {
+            do {
+                try FileManager.default.moveItem(at: currentURL, to: targetURL)
+            } catch {
+                throw SaveError.renameFailed(error.localizedDescription)
+            }
+            sourceFilePath = targetURL.path
+            columnTitle = targetName
+        }
+
+        isModifiedSinceFileOpen = false
     }
     
     // MARK: - Column Metadata (Title & Color)

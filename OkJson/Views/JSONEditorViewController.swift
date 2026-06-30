@@ -95,14 +95,20 @@ final class JSONEditorViewController: NSViewController, NSTextViewDelegate {
         header.translatesAutoresizingMaskIntoConstraints = false
         header.title = viewModel.columnTitle
         header.onClose = { [weak self] in self?.onCloseRequest?() }
-        header.onTitleChanged = { [weak self] newTitle in self?.viewModel.columnTitle = newTitle }
+        header.onTitleChanged = { [weak self] newTitle in
+            guard let self = self else { return }
+            // 标题(文件名)真的变了才记为未保存改动；点进点出未改名不误标记
+            guard newTitle != self.viewModel.columnTitle else { return }
+            self.viewModel.columnTitle = newTitle
+            self.viewModel.markAsModified()
+        }
         header.onColorChanged = { [weak self] color in self?.viewModel.columnColor = color }
         self.headerView = header
         header.setCloseVisible(closeButtonVisible)
         viewModel.onColumnMetadataChanged = { [weak self] in
             guard let self = self else { return }
-            let dot = self.viewModel.isModifiedSinceFileOpen ? "● " : ""
-            self.headerView.title = dot + self.viewModel.columnTitle
+            self.headerView.title = self.viewModel.columnTitle
+            self.headerView.isModified = self.viewModel.isModifiedSinceFileOpen
         }
 
         container.addSubview(header)
